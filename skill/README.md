@@ -28,6 +28,10 @@ at the repo root).
 ```bash
 # from the repo root
 npm run install-local
+
+# or install both skills directly from GitHub (project scope; add -g for user scope)
+npx skills add ikeng/agnes -s '*' -y
+npx skills add ikeng/agnes -g -s agnes-ai-skill -y
 ```
 
 The installer (`scripts/install-local.sh`) builds/links the patched CLI, then

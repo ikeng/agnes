@@ -57,6 +57,22 @@ agnes auth check         # 校验 key（不打印 key）
 `agnes-ai-cli@0.1.6` 备份后再 `npm link` 到本项目构建，可随时用
 `npm run uninstall-local` 回退。
 
+### 在其他机器 / 其他 agent 里安装技能
+
+skill 在仓库内（`skill/agnes-ai-skill`、`skill/agnes-ai-models`），可直接从 GitHub 安装：
+
+```bash
+# 项目级安装两个 skill（在当前项目生成 .agents/skills + skills-lock.json）
+npx skills add ikeng/agnes -s '*' -y
+
+# 只装 CLI-first skill；加 -g 则安装到用户级
+npx skills add ikeng/agnes -s agnes-ai-skill -y
+npx skills add ikeng/agnes -g -s '*' -y
+```
+
+`skills` CLI 会自动递归发现仓库里的两个 skill（实测输出 `Found 2 skills`）。
+本机已经用 `npm run install-local` 安装并软链到 `~/.agents/skills/`，无需重复执行。
+
 ## 常用命令
 
 ```bash
