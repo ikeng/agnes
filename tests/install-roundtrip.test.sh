@@ -220,8 +220,11 @@ fi
 if [ -d "$HOME/.agents/skills/agnes-ai-models" ] || [ -L "$HOME/.agents/skills/agnes-ai-models" ]; then
   real_skill_state="$real_skill_state models-present"
 fi
+# The real machine may be in either state: toolkit not installed yet (dir/absent)
+# or installed by scripts/install-local.sh (symlink into this repo). Both are
+# valid as long as the round-trip did not change them.
 case "$real_skill_state" in
-  dir|dir\ models-present|absent) t_ok ;;
+  absent|dir*|link:*) t_ok ;;
   *) t_fail "unexpected real skill state: $real_skill_state" ;;
 esac
 if [ ! -e "$HOME/.agnes-toolkit/install-manifest.env" ]; then
