@@ -12,6 +12,11 @@
 #        agnes-ai-generation -> project agnes-ai-skill, so the existing dangling
 #        ~/.claude and ~/.config/*/skills/agnes-ai-generation links resolve
 #      The dangling links themselves are NOT modified.
+#   4. syncs agnes-ai-skill/agnes-ai-models directly into detected Agnes-enabled
+#      agent skill dirs (~/.claude/skills, ~/.config/{devin,crush,goose}/skills,
+#      ~/.junie, ~/.mux, ~/.qwen, ~/.openhands, ~/.pochi, ~/.trae-cn,
+#      ~/.codemaker, ...). Override with AGNES_AGENT_SKILL_DIRS=/path/a:/path/b
+#      or AGNES_AGENT_SKILL_DIRS=all.
 #
 # It never touches ~/.agnes (a different product) and never deletes user data
 # without keeping a backup. State lives in ~/.agnes-toolkit/ by default.
@@ -30,8 +35,25 @@ REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd) || exit 1
 STATE_DIR=${AGNES_TOOLKIT_STATE_DIR:-"$HOME/.agnes-toolkit"}
 BACKUP_BASE="$STATE_DIR/backups"
 STAMP=$(date +%Y%m%d-%H%M%S)
-BACKUP_DIR="$BACKUP_BASE/$STAMP"
 MANIFEST="$STATE_DIR/install-manifest.env"
+
+# Reuse the previous backup root when it still exists, so a later install
+# (e.g. v1 manifest -> v2 with agent dirs) never loses the original rollback
+# backups. New backups then go under a reinstall-<stamp>/ namespace and never
+# overwrite the old ones.
+BACKUP_DIR="$BACKUP_BASE/$STAMP"
+BACKUP_NAMESPACE="reinstall-$STAMP"
+if [ -f "$MANIFEST" ] && head -n 1 "$MANIFEST" | grep -Eq '^AGNES_MANIFEST_VERSION=[12]$'; then
+  previous_backup_dir=$(sed -n 's/^BACKUP_DIR=//p' "$MANIFEST" 2>/dev/null | head -n 1)
+  case "$previous_backup_dir" in
+    \'*\') previous_backup_dir=${previous_backup_dir#?}; previous_backup_dir=${previous_backup_dir%?} ;;
+    \"*\") previous_backup_dir=${previous_backup_dir#?}; previous_backup_dir=${previous_backup_dir%?} ;;
+  esac
+  if [ -n "$previous_backup_dir" ] && [ -d "$previous_backup_dir" ]; then
+    BACKUP_DIR="$previous_backup_dir"
+    BACKUP_DIR_CREATED=1
+  fi
+fi
 
 HOME_SKILLS="$HOME/.agents/skills"
 SKILL_NAMES="agnes-ai-skill agnes-ai-models"
@@ -46,6 +68,13 @@ GLOBAL_BACKUP=0
 BACKED_SKILLS=""
 GENERATION_BACKUP=0
 GENERATION_WAS_LINK="none"
+BACKUP_LAST_NAME=""
+AGENT_SKILL_DIRS_LIST=""
+AGENT_SKILL_DIRS_JOINED=""
+AGENT_BACKUP_RECORDS=""
+AGENT_BACKUP_FILE=""
+AGENT_BACKUP_COUNT=0
+AGENT_COUNT=0
 BIN_PATH=""
 BIN_TARGET_BEFORE=""
 GLOBAL_TARGET=""
@@ -64,7 +93,9 @@ What it does:
      project build so `agnes` points at this repo
   3. backs up and links project skills under ~/.agents/skills/:
        agnes-ai-skill, agnes-ai-models, and an agnes-ai-generation alias
-  4. verifies the result and prints rollback instructions
+  4. links both skills into detected Agnes-enabled agent skill dirs
+       (override: AGNES_AGENT_SKILL_DIRS=/a/skills:/b/skills or "all")
+  5. verifies the result and prints rollback instructions
 
 ~/.agnes (a different product) is never touched.
 
@@ -108,13 +139,20 @@ ensure_backup_dir() {
 }
 
 # backup_entry <dir|link> <path> <backup-name>
+# Sets BACKUP_LAST_NAME to the name actually used (a reinstall-<stamp>/ prefix
+# is added when the standard name already exists, preserving older backups).
 backup_entry() {
   local kind src name
   kind=$1; src=$2; name=$3
+  BACKUP_LAST_NAME=""
   [ -e "$src" ] || [ -L "$src" ] || return 0
   if agnes_is_forbidden_path "$src"; then
     fail "refusing to touch forbidden path: $src"
   fi
+  if [ -e "$BACKUP_DIR/$name" ] || [ -e "$BACKUP_DIR/$name.link-target" ]; then
+    name="$BACKUP_NAMESPACE/$name"
+  fi
+  BACKUP_LAST_NAME="$name"
   if [ "$DRY_RUN" = "1" ]; then
     act "back up $src -> $BACKUP_DIR/$name"
     return 0
@@ -314,12 +352,87 @@ else
   warn "project skill missing ($GENERATION_SOURCE); skipping agnes-ai-generation alias"
 fi
 
+# --- agent skill dirs ---------------------------------------------------------
+# Sync the two project skills directly into agent tool skill dirs that already
+# have Agnes content (or are explicitly listed in AGNES_AGENT_SKILL_DIRS).
+AGENT_SKILL_DIRS_LIST=$(agnes_agent_skill_dirs 2>/dev/null || true)
+AGENT_BACKUP_FILE="$BACKUP_DIR/agent-skill-backups.txt"
+if [ -n "$AGENT_SKILL_DIRS_LIST" ]; then
+  say "agent skill dirs: syncing project skills into detected dirs"
+  while IFS= read -r agent_dir; do
+    [ -n "$agent_dir" ] || continue
+    [ -d "$agent_dir" ] || continue
+    if [ "$agent_dir" = "$HOME_SKILLS" ]; then
+      continue
+    fi
+    if agnes_is_forbidden_path "$agent_dir"; then
+      warn "skipping forbidden agent dir: $agent_dir"
+      continue
+    fi
+    AGENT_COUNT=$((AGENT_COUNT + 1))
+    AGENT_SKILL_DIRS_JOINED="${AGENT_SKILL_DIRS_JOINED:+$AGENT_SKILL_DIRS_JOINED:}$agent_dir"
+    for skill_name in $SKILL_NAMES; do
+      source_dir="$REPO_ROOT/skill/$skill_name"
+      [ -d "$source_dir" ] || continue
+      target_dir="$agent_dir/$skill_name"
+      if [ -L "$target_dir" ] && [ "$(readlink "$target_dir" 2>/dev/null || true)" = "$source_dir" ]; then
+        continue
+      fi
+      existing_kind="none"
+      if [ -L "$target_dir" ]; then
+        existing_kind="link"
+      elif [ -e "$target_dir" ]; then
+        existing_kind="dir"
+      fi
+      if [ "$DRY_RUN" = "1" ]; then
+        if [ "$existing_kind" = "none" ]; then
+          act "link agent skill: $target_dir -> $source_dir"
+        else
+          act "back up existing $existing_kind $target_dir, then link -> $source_dir"
+        fi
+        continue
+      fi
+      if [ "$existing_kind" != "none" ]; then
+        ensure_backup_dir
+        backup_name="agent-dirs/$AGENT_COUNT/$skill_name"
+        backup_entry "$existing_kind" "$target_dir" "$backup_name"
+        backup_name="$BACKUP_LAST_NAME"
+        mkdir -p "$(dirname -- "$AGENT_BACKUP_FILE")" 2>/dev/null || true
+        printf '%s|%s|%s|%s\n' "$agent_dir" "$skill_name" "$existing_kind" "$backup_name" >> "$AGENT_BACKUP_FILE" || fail "cannot record agent-dir backup"
+        AGENT_BACKUP_COUNT=$((AGENT_BACKUP_COUNT + 1))
+        rm -rf "$target_dir" || fail "cannot remove $target_dir"
+      fi
+      ln -s "$source_dir" "$target_dir" || fail "cannot link agent skill: $target_dir"
+      CHANGES=$((CHANGES + 1))
+      say "linked agent skill: $target_dir -> $source_dir"
+    done
+  done <<< "$AGENT_SKILL_DIRS_LIST"
+  if [ "$DRY_RUN" = "1" ]; then
+    say "agent skill dirs: $AGENT_COUNT detected (dry run)"
+  fi
+else
+  say "agent skill dirs: none detected (set AGNES_AGENT_SKILL_DIRS=all to include all known dirs)"
+fi
+if [ "$AGENT_BACKUP_COUNT" -gt 0 ]; then
+  AGENT_BACKUP_RECORDS="$AGENT_BACKUP_FILE"
+fi
+
 # --- manifest + verification --------------------------------------------------
 if [ "$DRY_RUN" = "0" ]; then
+  manifest_needs_write=0
   if [ "$CHANGES" -gt 0 ]; then
+    manifest_needs_write=1
+  fi
+  existing_manifest_version=$(sed -n 's/^AGNES_MANIFEST_VERSION=//p' "$MANIFEST" 2>/dev/null | head -n 1)
+  if [ -n "$AGENT_SKILL_DIRS_JOINED" ] && [ "$existing_manifest_version" != "2" ]; then
+    # Agent links may already be correct, but an old manifest would not know
+    # how to remove them on uninstall - upgrade it in place.
+    manifest_needs_write=1
+  fi
+  if [ "$manifest_needs_write" = "1" ]; then
     mkdir -p "$STATE_DIR" || fail "cannot create $STATE_DIR"
     {
-      printf 'AGNES_MANIFEST_VERSION=1\n'
+      printf 'AGNES_MANIFEST_VERSION=2\n'
       printf 'REPO_ROOT=%q\n' "$REPO_ROOT"
       printf 'BACKUP_DIR=%q\n' "$BACKUP_DIR"
       printf 'GLOBAL_ROOT=%q\n' "$GLOBAL_ROOT"
@@ -334,6 +447,8 @@ if [ "$DRY_RUN" = "0" ]; then
       printf 'GENERATION_TARGET=%q\n' "$GENERATION_TARGET"
       printf 'GENERATION_WAS_LINK=%q\n' "$GENERATION_WAS_LINK"
       printf 'GENERATION_BACKUP=%q\n' "$GENERATION_BACKUP"
+      printf 'AGENT_SKILL_DIRS=%q\n' "$AGENT_SKILL_DIRS_JOINED"
+      printf 'AGENT_BACKUP_RECORDS=%q\n' "$AGENT_BACKUP_RECORDS"
       printf 'INSTALLED_AT=%q\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')"
     } > "$MANIFEST"
     chmod 600 "$MANIFEST" 2>/dev/null || true
@@ -361,18 +476,31 @@ if [ "$DRY_RUN" = "0" ]; then
   if [ -e "$GENERATION_TARGET" ]; then
     printf 'alias: %s -> %s\n' "$GENERATION_TARGET" "$(readlink "$GENERATION_TARGET")"
   fi
+  if [ "$AGENT_COUNT" -gt 0 ] && [ -n "$AGENT_SKILL_DIRS_LIST" ]; then
+    agent_total=0
+    agent_ok=0
+    while IFS= read -r agent_dir; do
+      [ -n "$agent_dir" ] || continue
+      for skill_name in $SKILL_NAMES; do
+        source_dir="$REPO_ROOT/skill/$skill_name"
+        [ -d "$source_dir" ] || continue
+        agent_total=$((agent_total + 1))
+        if [ -L "$agent_dir/$skill_name" ] && [ "$(readlink "$agent_dir/$skill_name" 2>/dev/null || true)" = "$source_dir" ]; then
+          agent_ok=$((agent_ok + 1))
+        fi
+      done
+    done <<< "$AGENT_SKILL_DIRS_LIST"
+    if [ "$agent_ok" -eq "$agent_total" ]; then
+      printf 'agent dirs: %d dir(s), %d/%d skill links OK\n' "$AGENT_COUNT" "$agent_ok" "$agent_total"
+    else
+      warn "agent dirs: only $agent_ok/$agent_total skill links point at this repo"
+    fi
+  fi
   say ""
   say "rollback: bash scripts/uninstall-local.sh"
-  if [ "$GLOBAL_BACKUP" = "1" ]; then
-    say "backup:   $BACKUP_DIR/global/agnes-ai-cli"
-  elif [ -f "$BACKUP_DIR/global/agnes-ai-cli.link-target" ]; then
-    say "backup:   $BACKUP_DIR/global/agnes-ai-cli.link-target"
-  fi
-  for skill_name in $BACKED_SKILLS; do
-    say "backup:   $BACKUP_DIR/skills/$skill_name"
-  done
-  if [ "$GENERATION_BACKUP" = "1" ]; then
-    say "backup:   $BACKUP_DIR/skills/agnes-ai-generation"
+  say "backups:  $BACKUP_DIR"
+  if [ -n "$AGENT_BACKUP_RECORDS" ]; then
+    say "records:  $AGENT_BACKUP_RECORDS"
   fi
 else
   say ""

@@ -338,3 +338,22 @@ cleanly to a pristine v0.1.6 clone, is tree-identical to the vendored `cli/`, an
 `R-1` re-check — pristine clone + final patch `patchcheck/` (`patch-build.log`/`patch-test.log`,
 tree-identical diff), `nonreport.sha256` (hash `95369f28…`). Round-1 artifacts remain under
 `/tmp/agnes-verify/`.
+
+
+---
+
+## Post-verification deployment addendum (Lead, 2026-10-21 23:5x)
+
+This report was produced **before** the toolkit was deployed on the real machine. Since then:
+
+- `scripts/install-local.sh --yes` was applied: global `agnes` -> this repo
+  (`0.2.0-local.1`), `~/.agents/skills/{agnes-ai-skill,agnes-ai-models,agnes-ai-generation}`
+  linked, legacy dangling links repaired.
+- `install-local` was then extended (new feature, tested) to sync both skills into the 11
+  existing Agnes-enabled local agent skill dirs (`~/.claude/skills`,
+  `~/.config/{devin,crush,goose}/skills`, `~/.junie`, `~/.mux`, `~/.qwen`, `~/.openhands`,
+  `~/.pochi`, `~/.trae-cn`, `~/.codemaker`); 22/22 links verified, manifest upgraded to v2
+  with v1 compatibility, `doctor` reports per-dir PASS.
+- The regression test was adjusted to accept the installed symlink state; after real install:
+  `npm test` -> 12 suites / 0 failures, CLI 74/74.
+- Rollback remains `npm run uninstall-local` (backup root preserved across reinstalls).

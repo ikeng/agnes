@@ -212,6 +212,52 @@ else
   warn "$dangling dangling agnes-ai-generation link(s); install-local creates the ~/.agents/skills/agnes-ai-generation alias"
 fi
 
+section "agent skill dirs"
+if [ -n "${AGNES_AGENT_SKILL_DIRS:-}" ]; then
+  info "override: AGNES_AGENT_SKILL_DIRS=$AGNES_AGENT_SKILL_DIRS"
+fi
+AGENT_DIRS_LIST=$(agnes_agent_skill_dirs 2>/dev/null || true)
+if [ -z "$AGENT_DIRS_LIST" ]; then
+  info "none detected (default: existing known dirs containing an agnes-* entry)"
+  info "set AGNES_AGENT_SKILL_DIRS=all or a colon-separated list to include more"
+else
+  AGENT_DIRS_COUNT=0
+  while IFS= read -r agent_dir; do
+    [ -n "$agent_dir" ] || continue
+    AGENT_DIRS_COUNT=$((AGENT_DIRS_COUNT + 1))
+    info "dir: $agent_dir"
+    for skill_name in agnes-ai-skill agnes-ai-models; do
+      target="$agent_dir/$skill_name"
+      repo_source="$REPO_ROOT/skill/$skill_name"
+      if [ -L "$target" ]; then
+        link_target=$(readlink "$target" 2>/dev/null || true)
+        if [ ! -e "$target" ]; then
+          bad "  $skill_name -> $link_target (DANGLING)"
+        elif [ "$link_target" = "$repo_source" ]; then
+          pass "  $skill_name -> repo skill"
+        else
+          warn "  $skill_name -> $link_target (not this repo)"
+        fi
+      elif [ -e "$target" ]; then
+        warn "  $skill_name is a real directory (not repo-linked)"
+      else
+        warn "  $skill_name missing (run scripts/install-local.sh)"
+      fi
+    done
+    legacy="$agent_dir/agnes-ai-generation"
+    if [ -L "$legacy" ]; then
+      if [ -e "$legacy" ]; then
+        pass "  legacy agnes-ai-generation resolves -> $(readlink "$legacy")"
+      else
+        warn "  legacy agnes-ai-generation is dangling"
+      fi
+    elif [ -e "$legacy" ]; then
+      info "  legacy agnes-ai-generation is a real path (not a symlink)"
+    fi
+  done <<< "$AGENT_DIRS_LIST"
+  pass "$AGENT_DIRS_COUNT Agnes-enabled agent skill dir(s) detected/synced"
+fi
+
 section "docs reachability"
 if [ "$OFFLINE" = "1" ]; then
   info "skipped (--offline)"

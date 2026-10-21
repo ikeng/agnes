@@ -77,6 +77,85 @@ agnes_skill_link_paths() {
     "$HOME/.codemaker/skills/agnes-ai-generation"
 }
 
+# Agent skill directories that this toolkit knows about. Default discovery
+# only syncs into existing dirs that already contain an `agnes-*` entry; set
+# AGNES_AGENT_SKILL_DIRS to a colon-separated list (or "all") to override.
+agnes_known_agent_skill_dirs() {
+  printf '%s\n' \
+    "$HOME/.claude/skills" \
+    "$HOME/.config/devin/skills" \
+    "$HOME/.config/crush/skills" \
+    "$HOME/.config/goose/skills" \
+    "$HOME/.junie/skills" \
+    "$HOME/.mux/skills" \
+    "$HOME/.qwen/skills" \
+    "$HOME/.openhands/skills" \
+    "$HOME/.pochi/skills" \
+    "$HOME/.trae-cn/skills" \
+    "$HOME/.codemaker/skills" \
+    "$HOME/.codex/skills" \
+    "$HOME/.cursor/skills" \
+    "$HOME/.gemini/skills"
+}
+
+# True when <dir> exists and contains at least one `agnes-*` entry.
+agnes_dir_has_agnes_entry() {
+  local dir entry name
+  dir=$1
+  [ -d "$dir" ] || return 1
+  for entry in "$dir"/*; do
+    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    name=$(basename -- "$entry")
+    case "$name" in
+      agnes-*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# Print the agent skill dirs to sync (one normalized absolute path per line).
+# Default: known existing dirs that already contain an agnes-* entry.
+# AGNES_AGENT_SKILL_DIRS overrides: colon-separated paths, or "all" for every
+# existing known dir. Missing dirs and duplicates are skipped.
+agnes_agent_skill_dirs() {
+  local override discovered dir candidate norm result
+  override=${AGNES_AGENT_SKILL_DIRS:-}
+  result=$'\n'
+
+  if [ -n "$override" ]; then
+    case "$override" in
+      all) discovered=$(agnes_known_agent_skill_dirs) ;;
+      *) discovered=$(printf '%s' "$override" | tr ':' '\n') ;;
+    esac
+    while IFS= read -r dir; do
+      [ -n "$dir" ] || continue
+      candidate=$dir
+      case "$candidate" in
+        "~/"*) candidate="$HOME/${candidate#\~/}" ;;
+      esac
+      [ -d "$candidate" ] || continue
+      norm=$(CDPATH= cd -- "$candidate" && pwd -P) || continue
+      case "$result" in
+        *$'\n'"$norm"$'\n'*) continue ;;
+      esac
+      result="${result}${norm}"$'\n'
+    done <<< "$discovered"
+  else
+    while IFS= read -r dir; do
+      [ -n "$dir" ] || continue
+      [ -d "$dir" ] || continue
+      agnes_dir_has_agnes_entry "$dir" || continue
+      norm=$(CDPATH= cd -- "$dir" && pwd -P) || continue
+      case "$result" in
+        *$'\n'"$norm"$'\n'*) continue ;;
+      esac
+      result="${result}${norm}"$'\n'
+    done <<< "$(agnes_known_agent_skill_dirs)"
+  fi
+
+  printf '%s' "${result#$'\n'}"
+}
+
 # Guard: never modify the unrelated ~/.agnes product tree.
 agnes_is_forbidden_path() {
   case "$1" in

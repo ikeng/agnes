@@ -109,6 +109,47 @@ restore_directory() {
   fi
 }
 
+# Backup roots to search: reinstall-<stamp>/ namespaces (newest first), then the
+# manifest backup root itself (holds the original pre-install backups).
+backup_bases() {
+  local base
+  for base in "$BACKUP_DIR"/reinstall-*; do
+    [ -d "$base" ] || continue
+    printf '%s\n' "$base"
+  done | sort -r
+  if [ -n "${BACKUP_DIR:-}" ] && [ -d "$BACKUP_DIR" ]; then
+    printf '%s\n' "$BACKUP_DIR"
+  fi
+}
+
+# Print the saved link target for <relative-name>, searching all backup roots.
+find_backup_link_target() {
+  local relative_name base
+  relative_name=$1
+  while IFS= read -r base; do
+    [ -n "$base" ] || continue
+    if [ -f "$base/$relative_name.link-target" ]; then
+      cat "$base/$relative_name.link-target"
+      return 0
+    fi
+  done <<< "$(backup_bases)"
+  return 1
+}
+
+# Print a saved backup directory path for <relative-name>, searching all roots.
+find_backup_directory() {
+  local relative_name base
+  relative_name=$1
+  while IFS= read -r base; do
+    [ -n "$base" ] || continue
+    if [ -d "$base/$relative_name" ]; then
+      printf '%s\n' "$base/$relative_name"
+      return 0
+    fi
+  done <<< "$(backup_bases)"
+  return 1
+}
+
 # --- load manifest ------------------------------------------------------------
 BACKUP_DIR=""
 GLOBAL_TARGET=""
@@ -117,12 +158,16 @@ BIN_TARGET_BEFORE=""
 HOME_SKILLS="$HOME/.agents/skills"
 SKILL_NAMES="agnes-ai-skill agnes-ai-models"
 GENERATION_TARGET="$HOME_SKILLS/agnes-ai-generation"
+# Manifest v2 fields (defaults keep set -u happy when reading a v1 manifest).
+AGNES_MANIFEST_VERSION=0
+AGENT_SKILL_DIRS=""
+AGENT_BACKUP_RECORDS=""
 
 # Defaults used when no manifest exists (e.g. manual uninstall of an older install).
 GLOBAL_TARGET="$(npm root -g 2>/dev/null || true)/agnes-ai-cli"
 BIN_PATH=$(command -v agnes 2>/dev/null || true)
 
-if [ -f "$MANIFEST" ] && head -n 1 "$MANIFEST" | grep -q '^AGNES_MANIFEST_VERSION=1$'; then
+if [ -f "$MANIFEST" ] && head -n 1 "$MANIFEST" | grep -Eq '^AGNES_MANIFEST_VERSION=[12]$'; then
   # shellcheck disable=SC1090
   . "$MANIFEST"
   say "manifest: $MANIFEST"
@@ -161,12 +206,11 @@ fi
 # --- global package -----------------------------------------------------------
 if [ -n "$GLOBAL_TARGET" ] && { [ -e "$GLOBAL_TARGET" ] || [ -L "$GLOBAL_TARGET" ]; }; then
   if remove_link_if_project "$GLOBAL_TARGET"; then
-    link_backup="$BACKUP_DIR/global/agnes-ai-cli.link-target"
-    dir_backup="$BACKUP_DIR/global/agnes-ai-cli"
-    if [ -n "$BACKUP_DIR" ] && [ -f "$link_backup" ]; then
-      old_target=$(cat "$link_backup")
+    old_target=$(find_backup_link_target "global/agnes-ai-cli" 2>/dev/null || true)
+    dir_backup=$(find_backup_directory "global/agnes-ai-cli" 2>/dev/null || true)
+    if [ -n "$old_target" ]; then
       restore_symlink "$GLOBAL_TARGET" "$old_target"
-    elif [ -n "$BACKUP_DIR" ] && [ -d "$dir_backup" ]; then
+    elif [ -n "$dir_backup" ]; then
       restore_directory "$GLOBAL_TARGET" "$dir_backup"
     else
       warn "no global package backup; global agnes-ai-cli was removed (reinstall with npm if needed)"
@@ -203,12 +247,11 @@ for skill_name in ${SKILL_NAMES:-agnes-ai-skill agnes-ai-models}; do
   target="$HOME_SKILLS/$skill_name"
   if [ -L "$target" ]; then
     if remove_link_if_project "$target"; then
-      link_backup="$BACKUP_DIR/skills/$skill_name.link-target"
-      dir_backup="$BACKUP_DIR/skills/$skill_name"
-      if [ -n "$BACKUP_DIR" ] && [ -f "$link_backup" ]; then
-        old_target=$(cat "$link_backup")
+      old_target=$(find_backup_link_target "skills/$skill_name" 2>/dev/null || true)
+      dir_backup=$(find_backup_directory "skills/$skill_name" 2>/dev/null || true)
+      if [ -n "$old_target" ]; then
         restore_symlink "$target" "$old_target"
-      elif [ -n "$BACKUP_DIR" ] && [ -d "$dir_backup" ]; then
+      elif [ -n "$dir_backup" ]; then
         restore_directory "$target" "$dir_backup"
       else
         warn "no backup for skill $skill_name; link removed"
@@ -222,12 +265,11 @@ done
 # --- agnes-ai-generation alias ------------------------------------------------
 if [ -L "$GENERATION_TARGET" ]; then
   if remove_link_if_project "$GENERATION_TARGET"; then
-    link_backup="$BACKUP_DIR/skills/agnes-ai-generation.link-target"
-    dir_backup="$BACKUP_DIR/skills/agnes-ai-generation"
-    if [ -n "$BACKUP_DIR" ] && [ -f "$link_backup" ]; then
-      old_target=$(cat "$link_backup")
+    old_target=$(find_backup_link_target "skills/agnes-ai-generation" 2>/dev/null || true)
+    dir_backup=$(find_backup_directory "skills/agnes-ai-generation" 2>/dev/null || true)
+    if [ -n "$old_target" ]; then
       restore_symlink "$GENERATION_TARGET" "$old_target"
-    elif [ -n "$BACKUP_DIR" ] && [ -d "$dir_backup" ]; then
+    elif [ -n "$dir_backup" ]; then
       restore_directory "$GENERATION_TARGET" "$dir_backup"
     else
       warn "no backup for agnes-ai-generation; alias removed (old agent links may dangle again)"
@@ -235,6 +277,72 @@ if [ -L "$GENERATION_TARGET" ]; then
   fi
 elif [ -e "$GENERATION_TARGET" ]; then
   say "agnes-ai-generation is a real directory; leaving it untouched"
+fi
+
+# --- agent skill dirs (manifest v2) ------------------------------------------
+# install-local.sh records every synced agent dir in AGENT_SKILL_DIRS plus a
+# backup record file (dir|skill|kind|backup-name) for any pre-existing entries.
+if [ -n "${AGENT_SKILL_DIRS:-}" ]; then
+  AGENT_DIRS_LIST=$(printf '%s' "$AGENT_SKILL_DIRS" | tr ':' '\n')
+  while IFS= read -r agent_dir; do
+    [ -n "$agent_dir" ] || continue
+    [ -d "$agent_dir" ] || continue
+    if [ "$agent_dir" = "$HOME_SKILLS" ]; then
+      continue
+    fi
+    if agnes_is_forbidden_path "$agent_dir"; then
+      warn "skipping forbidden agent dir: $agent_dir"
+      continue
+    fi
+    for skill_name in ${SKILL_NAMES:-agnes-ai-skill agnes-ai-models}; do
+      target="$agent_dir/$skill_name"
+      if [ -L "$target" ]; then
+        if remove_link_if_project "$target"; then
+          record=""
+          if [ -n "${AGENT_BACKUP_RECORDS:-}" ] && [ -f "$AGENT_BACKUP_RECORDS" ]; then
+            record=$(awk -F'|' -v d="$agent_dir" -v s="$skill_name" '$1 == d && $2 == s { print; exit }' "$AGENT_BACKUP_RECORDS" 2>/dev/null || true)
+          fi
+          if [ -n "$record" ]; then
+            record_kind=$(printf '%s' "$record" | cut -d'|' -f3)
+            record_name=$(printf '%s' "$record" | cut -d'|' -f4)
+            link_backup="${BACKUP_DIR:-}/$record_name.link-target"
+            dir_backup="${BACKUP_DIR:-}/$record_name"
+            if [ "$record_kind" = "link" ] && [ -f "$link_backup" ]; then
+              old_target=$(cat "$link_backup")
+              restore_symlink "$target" "$old_target"
+            elif [ "$record_kind" = "dir" ] && [ -d "$dir_backup" ]; then
+              restore_directory "$target" "$dir_backup"
+            else
+              warn "no backup found for agent skill $target (record kept: $record)"
+            fi
+          fi
+        fi
+      elif [ -e "$target" ]; then
+        say "agent skill $target is not a symlink; leaving it untouched"
+      fi
+    done
+  done <<< "$AGENT_DIRS_LIST"
+elif [ "$AGNES_MANIFEST_VERSION" = "1" ]; then
+  say "manifest v1: agent-dir skill links are not tracked (nothing to undo there)"
+else
+  # No manifest information: best-effort cleanup of project links in detected dirs.
+  DETECTED_AGENT_DIRS=$(agnes_agent_skill_dirs 2>/dev/null || true)
+  if [ -n "$DETECTED_AGENT_DIRS" ]; then
+    while IFS= read -r agent_dir; do
+      [ -n "$agent_dir" ] || continue
+      if agnes_is_forbidden_path "$agent_dir"; then
+        continue
+      fi
+      for skill_name in ${SKILL_NAMES:-agnes-ai-skill agnes-ai-models}; do
+        target="$agent_dir/$skill_name"
+        if [ -L "$target" ]; then
+          if remove_link_if_project "$target"; then
+            warn "removed $target (no backup recorded)"
+          fi
+        fi
+      done
+    done <<< "$DETECTED_AGENT_DIRS"
+  fi
 fi
 
 # --- summary ------------------------------------------------------------------

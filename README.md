@@ -57,6 +57,20 @@ agnes auth check         # 校验 key（不打印 key）
 `agnes-ai-cli@0.1.6` 备份后再 `npm link` 到本项目构建，可随时用
 `npm run uninstall-local` 回退。
 
+### 本地 agent 环境同步
+
+`npm run install-local` 除了安装 CLI 和 `~/.agents/skills/`，还会把两个 skill **直接链入本机已存在、且已有 Agnes 条目的 agent 技能目录**，让 Claude Code、devin、crush、goose、junie、mux、qwen、openhands、pochi、trae-cn、codemaker 等环境统一使用本仓库版本（旧的 `agnes-ai-generation` 链接保持可用）：
+
+```bash
+npm run install-local                              # 默认同步检测到的 11 个 agent 目录
+AGNES_AGENT_SKILL_DIRS=all npm run install-local   # 连 ~/.codex、~/.cursor、~/.gemini 也装
+AGNES_AGENT_SKILL_DIRS=/path/a:/path/b npm run install-local  # 自定义目录
+npm run doctor                                     # 逐目录检查链接健康
+```
+
+安装状态记录在 `~/.agnes-toolkit/install-manifest.env`（v2，兼容 v1）；
+`npm run uninstall-local` 会按记录回滚，并恢复安装前的全局包/skill 备份。
+
 ### 在其他机器 / 其他 agent 里安装技能
 
 skill 在仓库内（`skill/agnes-ai-skill`、`skill/agnes-ai-models`），可直接从 GitHub 安装：

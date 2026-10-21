@@ -381,3 +381,45 @@ The project CLI and skill changed after §1–§8 were written (Lead contract up
 `scripts/`: `agnes` wrapper (project CLI exec + safe fallback env parsing), `setup.sh` (idempotent install/build/env creation, `--check`, `--with-live-check`), `install-local.sh` (backup + npm link + two skills + generation alias, `--dry-run`/`--yes`), `uninstall-local.sh` (manifest-driven restore, `--dry-run`/`--yes`), `doctor.sh` (offline/strict), `sync-upstream.sh` (bounded compare, `--update` stages to /tmp only), `smoke.sh` (offline default, `--live` one cheap 2.5-flash ping), `_lib.sh`.
 `tests/`: `run-all.sh` (runs `npm --prefix cli test` + 8 shell suites + 3 Node suites), `scripts-syntax`, `env-example`, `upstream-record`, `wrapper-env`, `setup-doctor`, `smoke-offline`, `install-dry-run`, `install-roundtrip`, `secrets`, `models-consistency`, `cli-contract`.
 Verification: `bash tests/run-all.sh` → **12 suites, 0 failures** (CLI 74/74 + 8 shell suites incl. the isolated install→uninstall round-trip + 3 Node suites); `install-local.sh --dry-run` showed the expected plan and left the machine unchanged; no live calls were made by the test suite. `smoke.sh --live` was not executed in this round to preserve the free-tier quota (path is covered by the offline auth check + the earlier live pings in §4.2).
+
+---
+
+## 10. Agent skill dir sync addendum (task-10, 2026-10-21)
+
+**Goal:** every local agent environment should see this repo's tooling/skills directly, not only through the legacy `agnes-ai-generation` alias. `scripts/install-local.sh` now syncs both project skills into the agent skill dirs that already carry Agnes content.
+
+### 10.1 What the scripts do
+
+- **Discovery** (`scripts/_lib.sh: agnes_agent_skill_dirs`): a known list of 14 agent skill dirs (`~/.claude/skills`, `~/.config/{devin,crush,goose}/skills`, `~/.junie/skills`, `~/.mux/skills`, `~/.qwen/skills`, `~/.openhands/skills`, `~/.pochi/skills`, `~/.trae-cn/skills`, `~/.codemaker/skills`, `~/.codex/skills`, `~/.cursor/skills`, `~/.gemini/skills`). Default: an existing dir that contains at least one `agnes-*` entry (link or directory). Override with `AGNES_AGENT_SKILL_DIRS=/path/a/skills:/path/b/skills` (missing paths skipped) or `AGNES_AGENT_SKILL_DIRS=all` (every existing known dir, including dirs with no Agnes entry yet).
+- **Install:** for each detected dir, ensure `<dir>/agnes-ai-skill -> <repo>/skill/agnes-ai-skill` and `<dir>/agnes-ai-models -> <repo>/skill/agnes-ai-models`. Existing real dirs/symlinks are backed up first (`~/.agnes-toolkit/backups/<ts>/agent-dirs/<n>/…`), recorded in `agent-skill-backups.txt`; new links are counted as changes; an already-correct link is a no-op. Legacy `<dir>/agnes-ai-generation` links are left untouched — they resolve through the canonical `~/.agents/skills/agnes-ai-generation` alias.
+- **Manifest v2:** adds `AGENT_SKILL_DIRS` (colon-separated normalized dirs) and `AGENT_BACKUP_RECORDS` (records file) while keeping all v1 fields. The previous backup root is reused across upgrades (new backups go under `reinstall-<stamp>/`), so a v1→v2 upgrade does not lose the original rollback backups.
+- **Uninstall:** reads v1 or v2 manifests. For v2 it removes repo-pointing links in recorded agent dirs and restores backups from the records file (link target or directory), searching both the standard and `reinstall-*/` namespaces. A v1 manifest prints a notice and behaves exactly as before; no manifest falls back to best-effort cleanup of repo links in detected dirs.
+- **Doctor:** new `agent skill dirs` section reports, per detected dir, whether `agnes-ai-skill`/`agnes-ai-models` point at this repo (PASS), are missing/other targets/dangling (WARN/FAIL), and whether the legacy `agnes-ai-generation` link resolves. The original dangling-link check is unchanged.
+- **Safety:** `~/.agnes` is never touched; dry-run prints every planned backup/removal/link; only symlinks pointing into this repo are removed; real dirs are left untouched unless they are replaced with a backup.
+
+### 10.2 Commands
+
+```bash
+# Preview: canonical skills + detected agent dirs (no changes)
+bash scripts/install-local.sh --dry-run
+
+# Include all known agent dirs, even ones without an Agnes entry yet
+AGNES_AGENT_SKILL_DIRS=all bash scripts/install-local.sh --dry-run
+
+# Apply (backups + manifest v2); restores/removes on uninstall
+bash scripts/install-local.sh --yes
+bash scripts/doctor.sh --offline        # per-dir health under "agent skill dirs"
+bash scripts/uninstall-local.sh --dry-run
+bash scripts/uninstall-local.sh --yes
+```
+
+On this machine the default dry-run detects **11 Agnes-enabled dirs** (the same dirs that carried the legacy `agnes-ai-generation` link) and plans `2 links × 11 dirs = 22` changes; it makes no changes. `~/.codex/skills`, `~/.cursor/skills`, `~/.gemini/skills` exist but have no Agnes entry, so they are only touched with `AGNES_AGENT_SKILL_DIRS=all` or by naming them explicitly.
+
+### 10.3 Tests
+
+`tests/install-roundtrip.test.sh` runs isolated fake-HOME round-trips (fake npm/global/state, never real `~/.claude`, `/usr/local`, or `~/.agnes-toolkit`):
+
+- **A:** fake `.claude/skills` with a dangling legacy link + fake `.config/devin/skills` with a real `agnes-ai-skill` dir: install creates both links in both dirs, backs up the real dir, leaves non-Agnes `.codex/skills` untouched, writes manifest v2; uninstall removes the new links, restores the devin dir, leaves the legacy link untouched.
+- **D:** `AGNES_AGENT_SKILL_DIRS=all` links into dirs without Agnes entries; uninstall removes them.
+- **E:** a v1 manifest remains readable by uninstall (canonical restore still works).
+- **F:** v1→v2 upgrade reuses the original backup root, so uninstall still restores the pre-upgrade canonical skill.

@@ -28,6 +28,9 @@ at the repo root).
 ```bash
 # from the repo root
 npm run install-local
+# this also syncs both skills directly into existing Agnes-enabled agent
+# skill dirs (~/.claude/skills, ~/.config/{devin,crush,goose}/skills, ...).
+# Set AGNES_AGENT_SKILL_DIRS=all to also include ~/.codex, ~/.cursor, ~/.gemini.
 
 # or install both skills directly from GitHub (project scope; add -g for user scope)
 npx skills add ikeng/agnes -s '*' -y
