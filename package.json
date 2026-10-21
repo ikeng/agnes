@@ -1,0 +1,20 @@
+{
+  "name": "agnes-toolkit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Consolidated, docs-current Agnes AI toolkit: patched agnes-ai-cli, skill, setup/doctor/sync automation, and offline tests.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "setup": "bash scripts/setup.sh",
+    "build": "npm --prefix cli run build",
+    "test": "bash tests/run-all.sh",
+    "doctor": "bash scripts/doctor.sh",
+    "install-local": "bash scripts/install-local.sh",
+    "uninstall-local": "bash scripts/uninstall-local.sh",
+    "sync-upstream": "bash scripts/sync-upstream.sh",
+    "smoke": "bash scripts/smoke.sh",
+    "smoke:live": "bash scripts/smoke.sh --live"
+  }
+}

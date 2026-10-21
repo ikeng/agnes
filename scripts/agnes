@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# agnes — project wrapper for the patched agnes CLI.
+#
+# Normal path: exec the project CLI (cli/bin/agnes.js) directly. As of CLI
+# 0.2.0-local.1 the CLI itself loads the nearest .env.local (AGNES_ENV_FILE /
+# AGNES_NO_DOTENV honored), so this wrapper does not need to parse the file.
+#
+# Fallback path: when the project build is missing, salvage the env file with
+# the small safe parser below (belt-and-braces, because the OLD global 0.1.6
+# binary has no dotenv support) and exec the global `agnes` with a warning.
+#
+# Never prints the key.
+#
+# Overrides (mainly for tests):
+#   AGNES_ENV_FILE      env file used by the fallback path
+#   AGNES_PROJECT_CLI   path to the project CLI entry (default cli/bin/agnes.js)
+#   AGNES_CLI_FALLBACK  set to 0 to disable the global-binary fallback
+set -u
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 1
+REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd) || exit 1
+ENV_FILE=${AGNES_ENV_FILE:-"$REPO_ROOT/.env.local"}
+PROJECT_CLI=${AGNES_PROJECT_CLI:-"$REPO_ROOT/cli/bin/agnes.js"}
+PROJECT_DIST=$(dirname -- "$PROJECT_CLI")/../dist/cli.js
+CLI_FALLBACK=${AGNES_CLI_FALLBACK:-1}
+
+load_env_file() {
+  local file line key value
+  file=$1
+  [ -f "$file" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%$'\r'}
+    case "$line" in
+      ''|'#'*) continue ;;
+    esac
+    case "$line" in
+      export[[:space:]]*)
+        line=${line#export}
+        line=${line# }
+        ;;
+    esac
+    case "$line" in
+      AGNES_API_KEY=*|AGNES_BASE_URL=*) ;;
+      *) continue ;;
+    esac
+    key=${line%%=*}
+    value=${line#*=}
+    value=${value#"${value%%[![:space:]]*}"}
+    value=${value%"${value##*[![:space:]]}"}
+    case "$value" in
+      \'*\'|\"*\")
+        value=${value#?}
+        value=${value%?}
+        ;;
+    esac
+    case "$value" in
+      *' #'*) value=${value%%' #'*} ;;
+    esac
+    case "$key" in
+      AGNES_API_KEY) export AGNES_API_KEY="$value" ;;
+      AGNES_BASE_URL) export AGNES_BASE_URL="$value" ;;
+    esac
+  done < "$file"
+}
+
+if [ -f "$PROJECT_CLI" ] && [ -f "$PROJECT_DIST" ]; then
+  if ! command -v node >/dev/null 2>&1; then
+    printf 'ERROR: node is required to run the project CLI.\n' >&2
+    exit 127
+  fi
+  # CLI handles .env.local discovery (AGNES_ENV_FILE / AGNES_NO_DOTENV).
+  exec node "$PROJECT_CLI" "$@"
+fi
+
+if [ "$CLI_FALLBACK" != "1" ]; then
+  printf 'ERROR: project CLI build missing: %s (run: bash scripts/setup.sh)\n' "$PROJECT_CLI" >&2
+  exit 127
+fi
+
+global_agnes=$(command -v agnes 2>/dev/null || true)
+if [ -z "$global_agnes" ]; then
+  printf 'ERROR: project CLI build missing and no global `agnes` binary found.\n' >&2
+  printf 'Run: bash scripts/setup.sh\n' >&2
+  exit 127
+fi
+
+# Guard against accidentally recursing through this wrapper itself.
+global_real=$(CDPATH= cd -- "$(dirname -- "$global_agnes")" && pwd)/$(basename -- "$global_agnes")
+if [ "$global_real" = "$SCRIPT_DIR/$(basename -- "$0")" ] || [ "$global_real" = "$0" ]; then
+  printf 'ERROR: fallback `agnes` resolves to this wrapper; project build is required.\n' >&2
+  printf 'Run: bash scripts/setup.sh\n' >&2
+  exit 127
+fi
+
+# Old global binaries do not understand dotenv, so load the file for them.
+if [ "${AGNES_NO_DOTENV:-0}" != "1" ]; then
+  load_env_file "$ENV_FILE"
+fi
+
+printf 'WARN: project CLI build missing; falling back to global agnes (%s).\n' "$global_agnes" >&2
+printf '      Run: bash scripts/setup.sh\n' >&2
+exec "$global_agnes" "$@"

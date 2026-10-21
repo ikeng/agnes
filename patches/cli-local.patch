@@ -1,0 +1,2512 @@
+diff --git a/.github/workflows/npm-release.yml b/.github/workflows/npm-release.yml
+deleted file mode 100644
+index a7cb935..0000000
+--- a/.github/workflows/npm-release.yml
++++ /dev/null
+@@ -1,95 +0,0 @@
+-name: npm release
+-
+-on:
+-  workflow_dispatch:
+-    inputs:
+-      release_version:
+-        description: Exact package version to publish
+-        required: true
+-        type: string
+-      npm_tag:
+-        description: npm dist-tag
+-        required: true
+-        default: latest
+-        type: string
+-      dry_run:
+-        description: Validate without publishing or tagging
+-        required: true
+-        default: true
+-        type: boolean
+-
+-permissions:
+-  contents: write
+-
+-concurrency:
+-  group: npm-release
+-  cancel-in-progress: false
+-
+-jobs:
+-  release:
+-    runs-on: ubuntu-latest
+-    steps:
+-      - uses: actions/checkout@v4
+-        with:
+-          ref: main
+-
+-      - uses: actions/setup-node@v4
+-        with:
+-          node-version: 22
+-          registry-url: https://registry.npmjs.org
+-          cache: npm
+-
+-      - run: npm ci
+-      - run: npm test
+-
+-      - name: Validate release inputs
+-        env:
+-          RELEASE_VERSION: ${{ inputs.release_version }}
+-          NPM_TAG: ${{ inputs.npm_tag }}
+-        run: |
+-          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+-          test "$PACKAGE_VERSION" = "$RELEASE_VERSION" || {
+-            echo "package.json version $PACKAGE_VERSION does not match requested $RELEASE_VERSION"
+-            exit 1
+-          }
+-          case "$NPM_TAG" in
+-            latest|next|beta) ;;
+-            *) echo "Unsupported npm tag: $NPM_TAG"; exit 1 ;;
+-          esac
+-          if npm view "agnes-ai-cli@$RELEASE_VERSION" version >/dev/null 2>&1; then
+-            echo "agnes-ai-cli@$RELEASE_VERSION already exists"
+-            exit 1
+-          fi
+-
+-      - name: Inspect package
+-        run: npm pack --dry-run
+-
+-      - name: Publish package
+-        if: ${{ !inputs.dry_run }}
+-        env:
+-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+-          NPM_TAG: ${{ inputs.npm_tag }}
+-        run: npm publish --access public --tag "$NPM_TAG"
+-
+-      - name: Verify publication
+-        if: ${{ !inputs.dry_run }}
+-        env:
+-          RELEASE_VERSION: ${{ inputs.release_version }}
+-        run: |
+-          for attempt in 1 2 3 4 5; do
+-            PUBLISHED_VERSION="$(npm view "agnes-ai-cli@$RELEASE_VERSION" version 2>/dev/null || true)"
+-            test "$PUBLISHED_VERSION" = "$RELEASE_VERSION" && exit 0
+-            sleep 5
+-          done
+-          echo "Published version could not be verified"
+-          exit 1
+-
+-      - name: Create GitHub release
+-        if: ${{ !inputs.dry_run }}
+-        env:
+-          GH_TOKEN: ${{ github.token }}
+-          RELEASE_VERSION: ${{ inputs.release_version }}
+-        run: |
+-          git tag "v$RELEASE_VERSION" "$GITHUB_SHA"
+-          git push origin "v$RELEASE_VERSION"
+-          gh release create "v$RELEASE_VERSION" --generate-notes --verify-tag
+diff --git a/README.md b/README.md
+index 9f328d8..b364663 100644
+--- a/README.md
++++ b/README.md
+@@ -1,41 +1,84 @@
+-# agnes-ai-cli
++# agnes-ai-cli (patched local build)
+ 
+ CLI and JS API for Agnes text, image, and video workflows.
+ 
+-## Install
++This directory vendors [jomeswang/agnes-ai-cli](https://github.com/jomeswang/agnes-ai-cli)
++v0.1.6 and applies the local model/API patches documented in
++[`../README.md`](../README.md) and [`UPSTREAM.md`](./UPSTREAM.md). It is the
++source of truth for the `agnes` binary installed by this repo.
+ 
+-Install globally:
++## Model defaults
+ 
+-```bash
+-npm install -g agnes-ai-cli
+-```
++| Workflow | Default model | Notes |
++| --- | --- | --- |
++| Text | `agnes-2.5-flash` | `agnes-2.0-flash` is deprecated upstream; `agnes-3.0-flash`, `agnes-2.5-pro`, `agnes-2.5-pro-beta` are selectable. |
++| Image | `agnes-image-2.5-flash` | `agnes-image-2.1-flash` and `agnes-image-2.0-flash` remain available. |
++| Video | `agnes-video-2.5` | `agnes-video-2.5-flash` available; `agnes-video-v2.0` was retired upstream on 2026-09-25. |
++
++Run `agnes models` to print the live catalog.
++
++## Configuration
++
++The CLI reads the nearest `.env.local` (walking up from the current directory,
++up to four parents) before running; variables already set in the shell win.
++This repo keeps the API key in `.env.local` (gitignored, mode 600).
+ 
+-Run without installing:
++| Variable | Purpose |
++| --- | --- |
++| `AGNES_API_KEY` | Required API key. |
++| `AGNES_BASE_URL` | Override the gateway, e.g. `https://api.agnes-ai.cn/v1` for the China service or `https://apihub.agnes-ai.cn/v1` as international fallback. |
++| `AGNES_MEDIA_PROVIDER_ORDER` | Comma-separated temporary-upload order; this repo defaults to `uguu,x0,litterbox,tmpfiles` because Litterbox is blocked from this host. Allowed: `litterbox`, `tmpfiles`, `uguu`, `x0`. |
++| `AGNES_HTTP_TIMEOUT_MS` | Per-request timeout in milliseconds (default `120000`). |
++| `AGNES_ENV_FILE` | Load an explicit env file instead of searching for `.env.local`. |
++| `AGNES_NO_DOTENV` | Set to `1` to disable `.env.local` autoloading (library use is always file-free). |
++
++`agnes auth check` exits with status `1` when no key is configured, which makes
++it usable in `if` statements and smoke scripts.
++
++## Install (from this repo)
+ 
+ ```bash
+-npx -y agnes-ai-cli --help
++cd cli
++npm install
++npm run build
++npm link   # exposes the patched `agnes` binary on PATH
+ ```
+ 
++From the repo root, `npm run setup` and `npm run install-local` wrap these steps
++and also install the skill.
++
+ ## CLI
+ 
+ ```bash
+-agnes --help
++agnes models
+ agnes auth check
+ agnes media url ./input.png
++
+ agnes text chat --prompt "say pong"
+-agnes image text2img --prompt "a polished product photo of a perfume bottle"
++agnes text chat --model agnes-3.0-flash --prompt "write a TypeScript function"
++
++agnes image text2img --prompt "a polished product photo of a perfume bottle" --size 2K --ratio 16:9
+ agnes image img2img --image ./input.png --prompt "turn this into a clean editorial poster"
+-agnes video text2video --prompt "a cinematic drone shot of waves at dusk"
++agnes image compose --image ./a.png --image ./b.png --prompt "blend these references"
++
++agnes video text2video --prompt "a cinematic drone shot of waves at dusk" --seconds 5 --size 720P
+ agnes video img2video --image ./frame.png --prompt "animate subtle rain and drifting fog"
+-agnes video multivideo --image ./frame-a.png --image ./frame-b.png --prompt "blend these references into one motion concept"
++agnes video multivideo --image ./frame-a.png --image ./frame-b.png --prompt "use both as references"
+ agnes video keyframes --image ./frame-a.png --image ./frame-b.png --prompt "morph between the two scenes"
+-agnes video poll <video-or-task-id>
++agnes video get video_123 --model agnes-video-2.5
++agnes video poll video_123 --model agnes-video-2.5
+ ```
+ 
+-Local media inputs are uploaded to a temporary public URL automatically. The default bridge tries Litterbox first, then falls back to tmpfiles, Uguu, and x0.at.
+-Video creation is asynchronous. Create commands print both `taskId` and `videoId` when Agnes returns them; use `videoId` with `agnes video poll`. Passing an older `taskId` still works through the legacy polling endpoint.
++Local media inputs are uploaded to a temporary public URL automatically. The
++default bridge tries Litterbox first, then falls back to tmpfiles, Uguu, and
++x0.at.
+ 
+-The JS API also exposes `video.get(id)` for one status request. It returns a normalized status object and reads completed video URLs from the official `metadata.url` response field. Use it when the caller needs to own polling or persist each status transition.
++Video creation is asynchronous. Create commands print `taskId`, `videoId`, the
++model, and a ready-to-run `next: agnes video poll ... --model ...` hint; use
++`videoId` with `agnes video poll`. Video 2.5 recommends
++`video_id + model_name` for every mode and requires `model_name` for keyframe and
++reference tasks, so pass `--model` when polling. Passing an older `taskId` still
++uses the legacy `/videos/{task_id}` endpoint.
+ 
+ ## JS API
+ 
+@@ -46,17 +89,44 @@ const agnes = createAgnesClient({ apiKey: process.env.AGNES_API_KEY });
+ 
+ const image = await agnes.image.generate({
+   mode: "text2img",
+-  prompt: "A cinematic product shot of a silver watch on black stone."
++  prompt: "A cinematic product shot of a silver watch on black stone.",
++  size: "2K",
++  ratio: "16:9",
+ });
+ 
+ console.log(image.url);
+ ```
+ 
+-You can override the temporary upload provider order when a specific host works better for your Agnes workflow:
++You can override the temporary upload provider order when a specific host works
++better for your Agnes workflow:
+ 
+ ```js
+ const agnes = createAgnesClient({
+   apiKey: process.env.AGNES_API_KEY,
+-  temporaryMediaProviderOrder: ["tmpfiles", "litterbox", "uguu", "x0"]
++  temporaryMediaProviderOrder: ["tmpfiles", "litterbox", "uguu", "x0"],
+ });
+ ```
++
++The JS API exposes `video.get(id, { modelName })` for a single status request
++and `video.poll(id, { modelName, intervalSeconds, timeoutSeconds })` for polling.
++Completed video URLs are read from the official top-level `url` field, with
++legacy `metadata.url` / `remixed_from_video_id` fallbacks.
++
++## Network behavior
++
++- Status GETs are retried on transient network errors (idempotent only).
++- POSTs are **not** retried by default, so a timeout never silently creates a
++  second billable image/video/text request.
++- Polling retries transient `429`/`5xx`/network errors until the overall
++  `--timeout` budget expires.
++- Every request has an `AbortSignal` timeout (`AGNES_HTTP_TIMEOUT_MS`).
++
++## Tests
++
++```bash
++npm test
++```
++
++74 offline tests use injected `fetchImpl` implementations; no API key is
++required. They cover model catalogs/defaults, image/video payloads, Video 2.5
++polling with `model_name`, retry/timeout behavior, env loading, and CLI help.
+diff --git a/UPSTREAM.md b/UPSTREAM.md
+new file mode 100644
+index 0000000..8a4fd7e
+--- /dev/null
++++ b/UPSTREAM.md
+@@ -0,0 +1,44 @@
++# Upstream
++
++- Repository: https://github.com/jomeswang/agnes-ai-cli
++- Vendored commit: 9e629302cf30898d09f60fb2ba3e52e795b7ccf4 (v0.1.6 tag)
++- npm release: agnes-ai-cli@0.1.6 (published 2026-08-10)
++- Vendored on: 2026-10-21
++- Local patches are documented in this repo's README / docs/upstream-research.md.
++
++## Local patches (v0.2.0-local.1)
++
++The vendored source is upstream v0.1.6 plus these documented fixes:
++
++- `src/models.ts` (new): single model catalog/defaults for text, image, video.
++- `src/text/complete.ts`: default text model `agnes-2.0-flash` -> `agnes-2.5-flash`.
++- `src/image/normalizeImageRequest.ts`: adds `agnes-image-2.5-flash`, default 2.5,
++  always sends a valid `size` (default `1024x1024`), adds `--ratio`, size validation.
++- `src/video/normalizeVideoRequest.ts`: new Video 2.5 request contract
++  (`mode`/`seconds`/`size`/`aspect_ratio`; `first_frame`/`last_frame`/`images`),
++  legacy v2.0 payload only when explicitly selected, per-model validation.
++- `src/video/getVideo.ts`, `pollVideo.ts`: `model_name` support on
++  `/agnesapi?video_id=...` (required by Video 2.5 keyframe/reference tasks).
++- `src/cli.ts`: `agnes models`, Video 2.5 flags, `video get`, model-aware poll,
++  `--version` read from package.json, updated help text.
++- `src/index.ts`: export model catalog.
++- `test/`: 74 offline tests covering the patched contracts.
++
++The complete diff against upstream v0.1.6 is stored at
++[`../patches/cli-local.patch`](../patches/cli-local.patch). It includes new files
++(`src/models.ts`, `src/env.ts`), the package.json/package-lock version bump, all
++test changes, and the removed upstream npm-release workflow. Verified by applying
++it to a pristine v0.1.6 checkout (`git apply`), then `npm run build && npm test`
++-> 74/74 passing.
++- `src/config.ts`: `AGNES_BASE_URL` override and `AGNES_MEDIA_PROVIDER_ORDER`.
++- `src/env.ts` (new) + CLI entry: automatic `.env.local` loading (existing env wins,
++  `AGNES_NO_DOTENV`/`AGNES_ENV_FILE` escape hatches).
++- `src/http/requestJson.ts`: per-request timeouts; retries only idempotent GETs
++  (POSTs are never retried automatically to avoid duplicate billable requests).
++- `src/video/pollVideo.ts`: retries transient 429/5xx/network polling errors until
++  the overall timeout instead of failing immediately.
++- `agnes auth check` exits 1 when no key is configured.
++
++Note: upstream `.github/workflows/npm-release.yml` was removed from the vendored
++copy because this repo builds `cli/` as a subdirectory, not as the upstream
++package repository.
+diff --git a/package-lock.json b/package-lock.json
+index e38a4dd..f9ba98e 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "agnes-ai-cli",
+-  "version": "0.1.6",
++  "version": "0.2.0-local.1",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "agnes-ai-cli",
+-      "version": "0.1.6",
++      "version": "0.2.0-local.1",
+       "license": "MIT",
+       "dependencies": {
+         "commander": "^15.0.0",
+diff --git a/package.json b/package.json
+index a1fac3b..1bebbb3 100644
+--- a/package.json
++++ b/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "agnes-ai-cli",
+-  "version": "0.1.6",
+-  "description": "CLI and JS API for Agnes text, image, and video workflows.",
++  "version": "0.2.0-local.1",
++  "description": "CLI and JS API for Agnes text, image, and video workflows (patched local toolkit build).",
+   "type": "module",
+   "bin": {
+     "agnes": "bin/agnes.js"
+diff --git a/src/cli.ts b/src/cli.ts
+index 8af6825..ca8e762 100644
+--- a/src/cli.ts
++++ b/src/cli.ts
+@@ -1,29 +1,97 @@
+ import { Command } from "commander";
++import { createRequire } from "node:module";
+ import { fileURLToPath } from "node:url";
+ import { z } from "zod";
+ import { saveKeyToShell } from "./auth/saveKey.js";
++import { loadLocalEnv } from "./env.js";
+ import { createAgnesClient } from "./index.js";
+ import { isAgnesCliError } from "./errors.js";
++import {
++  DEFAULT_IMAGE_MODEL,
++  DEFAULT_IMAGE_SIZE,
++  DEFAULT_TEXT_MODEL,
++  DEFAULT_VIDEO_MODEL,
++  IMAGE_MODELS,
++  IMAGE_RATIOS,
++  IMAGE_SIZE_TIERS,
++  isDeprecatedTextModel,
++  isLegacyVideoModel,
++  TEXT_MODELS,
++  VIDEO_ASPECT_RATIOS,
++  VIDEO_MODELS,
++  VIDEO_SIZE_TIERS,
++} from "./models.js";
+ import { printJson, printLines } from "./output.js";
+ 
++const pkg = createRequire(import.meta.url)("../package.json") as { version: string };
++
+ export async function runCli(argv = process.argv): Promise<void> {
++  // Pick up the nearest .env.local so the installed CLI works from this repo
++  // without exporting AGNES_API_KEY in every shell. Explicit env wins.
++  loadLocalEnv();
++
+   const program = new Command();
+   program
+     .name("agnes")
+     .description("CLI for Agnes AI text, image, and video workflows, with auth and media URL bridging")
+-    .version("0.1.0")
++    .version(pkg.version)
+     .addHelpText("after", `
+ Examples:
++  agnes models
+   agnes auth check
+   agnes media url ./input.png
++  agnes image text2img --prompt "A luminous city at sunrise" --size 2K --ratio 16:9
+   agnes image img2img --image ./input.png --prompt "Turn this into an editorial campaign"
++  agnes video text2video --prompt "A cinematic beach scene at sunset" --seconds 5 --size 720P
+   agnes video keyframes --image ./a.png --image ./b.png --prompt "Transition between these frames"
++  agnes video poll video_123 --model agnes-video-2.5
+ 
+-Use this CLI when you want explicit Agnes request-shape handling, local-file URL bridging, or stable JSON output for agents.
++Models and docs: https://wiki.agnes-ai.com/llms.txt
+ `);
+ 
+   const client = createAgnesClient();
+ 
++  const models = program.command("models").description("List supported Agnes models and defaults");
++  models
++    .option("--json", "Output JSON")
++    .action((options) => {
++      const catalog = {
++        ok: true,
++        text: {
++          default: DEFAULT_TEXT_MODEL,
++          models: TEXT_MODELS.map((id) => ({
++            id,
++            status: isDeprecatedTextModel(id) ? "deprecated" : "current",
++          })),
++        },
++        image: {
++          default: DEFAULT_IMAGE_MODEL,
++          models: IMAGE_MODELS.map((id) => ({
++            id,
++            status: id === "agnes-image-2.0-flash" ? "legacy" : "current",
++          })),
++        },
++        video: {
++          default: DEFAULT_VIDEO_MODEL,
++          models: VIDEO_MODELS.map((id) => ({
++            id,
++            status: isLegacyVideoModel(id) ? "retired" : "current",
++          })),
++        },
++        docs: "https://wiki.agnes-ai.com/llms.txt",
++      };
++      if (options.json) {
++        printJson(catalog);
++        return;
++      }
++      printLines([
++        `text   default=${catalog.text.default}  [${formatModels(catalog.text.models, catalog.text.default)}]`,
++        `image  default=${catalog.image.default}  [${formatModels(catalog.image.models, catalog.image.default)}]`,
++        `video  default=${catalog.video.default}  [${formatModels(catalog.video.models, catalog.video.default)}]`,
++        `docs   ${catalog.docs}`,
++      ]);
++    });
++
+   const auth = program.command("auth").description("Inspect and configure Agnes auth");
+   auth.addHelpText("after", `
+ Examples:
+@@ -40,12 +108,15 @@ Use this group to verify AGNES_API_KEY or persist it into the active shell rc fi
+       const result = client.auth.check();
+       if (options.json) {
+         printJson(result);
+-        return;
++      } else {
++        printLines([
++          result.configured ? "AGNES_API_KEY is configured." : "AGNES_API_KEY is missing.",
++          `source: ${result.source}`,
++        ]);
++      }
++      if (!result.configured) {
++        process.exitCode = 1;
+       }
+-      printLines([
+-        result.configured ? "AGNES_API_KEY is configured." : "AGNES_API_KEY is missing.",
+-        `source: ${result.source}`,
+-      ]);
+     });
+   auth
+     .command("save-key")
+@@ -91,6 +162,7 @@ Use this group when Agnes requires a public image URL and your source asset is a
+   text.addHelpText("after", `
+ Examples:
+   agnes text chat --prompt "Reply with exactly pong."
++  agnes text chat --model agnes-3.0-flash --prompt "Write a TypeScript function"
+ 
+ Use this group for Agnes chat/completions request shapes when you want a minimal one-shot text call through the CLI.
+ `);
+@@ -98,16 +170,20 @@ Use this group for Agnes chat/completions request shapes when you want a minimal
+     .command("chat")
+     .description("Run a one-shot Agnes chat completion")
+     .requiredOption("--prompt <text>", "Prompt text")
+-    .option("--model <model>", "Agnes text model", "agnes-2.0-flash")
++    .option("--model <model>", `Agnes text model (default: ${DEFAULT_TEXT_MODEL})`, DEFAULT_TEXT_MODEL)
+     .option("--json", "Output JSON")
+     .addHelpText("after", `
+ Example:
+   agnes text chat --prompt "Reply with exactly pong."
+ 
+ Request shape:
+-  Sends a single-user-message Agnes /chat/completions request with agnes-2.0-flash by default.
++  Sends a single-user-message Agnes /chat/completions request with ${DEFAULT_TEXT_MODEL} by default.
++  Switch models with --model (agnes-3.0-flash, agnes-2.5-pro, agnes-2.5-pro-beta). agnes-2.0-flash is deprecated.
+ `)
+     .action(async (options) => {
++      if (isDeprecatedTextModel(options.model)) {
++        console.error(`warning: ${options.model} is deprecated by Agnes. Prefer ${DEFAULT_TEXT_MODEL}.`);
++      }
+       const result = await client.text.complete({
+         prompt: options.prompt,
+         model: options.model,
+@@ -122,7 +198,7 @@ Request shape:
+   const image = program.command("image").description("Generate Agnes images");
+   image.addHelpText("after", `
+ Examples:
+-  agnes image text2img --prompt "A luminous city at sunrise"
++  agnes image text2img --prompt "A luminous city at sunrise" --size 2K --ratio 16:9
+   agnes image img2img --image ./input.png --prompt "Restyle this frame for a premium campaign"
+   agnes image compose --image ./a.png --image ./b.png --prompt "Blend these references"
+ 
+@@ -132,16 +208,18 @@ Use this group for /images/generations request shapes. text2img sends prompt-onl
+     .command("text2img")
+     .description("Generate an image from text")
+     .requiredOption("--prompt <text>", "Prompt text")
+-    .option("--model <model>", "Agnes image model")
+-    .option("--size <size>", "Image size, e.g. 1024x768")
+-    .option("--seed <number>", "Seed", parseInteger)
++    .option("--model <model>", `Agnes image model (default: ${DEFAULT_IMAGE_MODEL})`)
++    .option("--size <size>", `Image size tier (${IMAGE_SIZE_TIERS.join(", ")}) or WIDTHxHEIGHT (default: ${DEFAULT_IMAGE_SIZE})`)
++    .option("--ratio <ratio>", `Aspect ratio (${IMAGE_RATIOS.join(", ")})`)
++    .option("--seed <number>", "Seed (pass-through; undocumented for image models)", parseInteger)
+     .option("--json", "Output JSON")
+     .addHelpText("after", `
+ Example:
+-  agnes image text2img --prompt "A luminous city at sunrise" --size 1024x1024
++  agnes image text2img --prompt "A luminous city at sunrise" --size 2K --ratio 16:9
+ 
+ Request shape:
+-  Sends prompt-only generation to Agnes /images/generations with agnes-image-2.1-flash by default.
++  Sends prompt-only generation to Agnes /images/generations with ${DEFAULT_IMAGE_MODEL} by default.
++  Pass --size as a tier (1K, 2K, 3K, 4K) or an exact legacy size (e.g. 1024x1024).
+ `)
+     .action(async (options) => {
+       const result = await client.image.generate({
+@@ -149,6 +227,7 @@ Request shape:
+         prompt: options.prompt,
+         model: options.model,
+         size: options.size,
++        ratio: options.ratio,
+         seed: options.seed,
+       });
+       if (options.json) {
+@@ -162,9 +241,10 @@ Request shape:
+     .description("Generate an image from one input image")
+     .requiredOption("--image <path-or-url>", "Input image path or URL")
+     .requiredOption("--prompt <text>", "Prompt text")
+-    .option("--model <model>", "Agnes image model")
+-    .option("--size <size>", "Image size, e.g. 1024x768")
+-    .option("--seed <number>", "Seed", parseInteger)
++    .option("--model <model>", `Agnes image model (default: ${DEFAULT_IMAGE_MODEL})`)
++    .option("--size <size>", `Image size tier (${IMAGE_SIZE_TIERS.join(", ")}) or WIDTHxHEIGHT (default: ${DEFAULT_IMAGE_SIZE})`)
++    .option("--ratio <ratio>", `Aspect ratio (${IMAGE_RATIOS.join(", ")})`)
++    .option("--seed <number>", "Seed (pass-through; undocumented for image models)", parseInteger)
+     .option("--ttl <ttl>", "Temporary upload TTL", "1h")
+     .option("--json", "Output JSON")
+     .addHelpText("after", `
+@@ -181,6 +261,7 @@ Request shape:
+         prompt: options.prompt,
+         model: options.model,
+         size: options.size,
++        ratio: options.ratio,
+         seed: options.seed,
+         ttl: ttlSchema.parse(options.ttl),
+       });
+@@ -195,9 +276,10 @@ Request shape:
+     .description("Generate an image from multiple input images")
+     .requiredOption("--image <path-or-url...>", "Repeatable image path or URL")
+     .requiredOption("--prompt <text>", "Prompt text")
+-    .option("--model <model>", "Agnes image model")
+-    .option("--size <size>", "Image size, e.g. 1024x768")
+-    .option("--seed <number>", "Seed", parseInteger)
++    .option("--model <model>", `Agnes image model (default: ${DEFAULT_IMAGE_MODEL})`)
++    .option("--size <size>", `Image size tier (${IMAGE_SIZE_TIERS.join(", ")}) or WIDTHxHEIGHT (default: ${DEFAULT_IMAGE_SIZE})`)
++    .option("--ratio <ratio>", `Aspect ratio (${IMAGE_RATIOS.join(", ")})`)
++    .option("--seed <number>", "Seed (pass-through; undocumented for image models)", parseInteger)
+     .option("--ttl <ttl>", "Temporary upload TTL", "1h")
+     .option("--json", "Output JSON")
+     .addHelpText("after", `
+@@ -215,6 +297,7 @@ Request shape:
+         prompt: options.prompt,
+         model: options.model,
+         size: options.size,
++        ratio: options.ratio,
+         seed: options.seed,
+         ttl: ttlSchema.parse(options.ttl),
+       });
+@@ -228,23 +311,21 @@ Request shape:
+   const video = program.command("video").description("Generate Agnes videos");
+   video.addHelpText("after", `
+ Examples:
+-  agnes video text2video --prompt "A cinematic beach scene at sunset"
++  agnes video text2video --prompt "A cinematic beach scene at sunset" --seconds 5 --size 720P
+   agnes video img2video --image ./frame.png --prompt "Add gentle wind and a soft push-in"
+   agnes video keyframes --image ./a.png --image ./b.png --prompt "Transition between the frames"
+-  agnes video poll video_123
++  agnes video multivideo --image ./a.png --image ./b.png --prompt "Use both images as references"
++  agnes video get video_123 --model agnes-video-2.5
++  agnes video poll video_123 --model agnes-video-2.5
+ 
+-Use this group for Agnes video task creation and polling. Video creation is asynchronous; poll uses the recommended video_id endpoint and keeps task_id inputs compatible with the legacy endpoint.
++Agnes Video 2.5 (default) is asynchronous: create a task, then poll it with video_id + model_name.
++Agnes Video v2.0 was retired on 2026-09-25; legacy flags stay available only for explicit --model agnes-video-v2.0 calls.
+ `);
+   buildVideoGenerateCommand(video, "text2video", "Generate a video from text", async (client, options) =>
+     client.video.generate({
+       mode: "text2video",
+       prompt: options.prompt,
+-      width: options.width,
+-      height: options.height,
+-      numFrames: options.numFrames,
+-      frameRate: options.frameRate,
+-      seed: options.seed,
+-      negativePrompt: options.negativePrompt,
++      ...videoOptions(options),
+     }),
+   );
+   buildVideoGenerateCommand(video, "img2video", "Generate a video from one input image", async (client, options) =>
+@@ -252,12 +333,7 @@ Use this group for Agnes video task creation and polling. Video creation is asyn
+       mode: "img2video",
+       image: Array.isArray(options.image) ? options.image[0] : options.image,
+       prompt: options.prompt,
+-      width: options.width,
+-      height: options.height,
+-      numFrames: options.numFrames,
+-      frameRate: options.frameRate,
+-      seed: options.seed,
+-      negativePrompt: options.negativePrompt,
++      ...videoOptions(options),
+       ttl: ttlSchema.parse(options.ttl),
+     }),
+     "single",
+@@ -267,12 +343,7 @@ Use this group for Agnes video task creation and polling. Video creation is asyn
+       mode: "multivideo",
+       images: toArray(options.image),
+       prompt: options.prompt,
+-      width: options.width,
+-      height: options.height,
+-      numFrames: options.numFrames,
+-      frameRate: options.frameRate,
+-      seed: options.seed,
+-      negativePrompt: options.negativePrompt,
++      ...videoOptions(options),
+       ttl: ttlSchema.parse(options.ttl),
+     }),
+     "multi",
+@@ -282,45 +353,65 @@ Use this group for Agnes video task creation and polling. Video creation is asyn
+       mode: "keyframes",
+       images: toArray(options.image),
+       prompt: options.prompt,
+-      width: options.width,
+-      height: options.height,
+-      numFrames: options.numFrames,
+-      frameRate: options.frameRate,
+-      seed: options.seed,
+-      negativePrompt: options.negativePrompt,
++      ...videoOptions(options),
+       ttl: ttlSchema.parse(options.ttl),
+     }),
+     "multi",
+   );
++
++  video
++    .command("get")
++    .description("Fetch one Agnes video task status")
++    .argument("<video-or-task-id>", "Video id returned by Agnes video creation; task ids are accepted for legacy compatibility")
++    .option("--model <model>", `Video model used for model_name polling (default: ${DEFAULT_VIDEO_MODEL})`, DEFAULT_VIDEO_MODEL)
++    .option("--timeout <seconds>", "Request timeout seconds", parseInteger, 30)
++    .option("--json", "Output JSON")
++    .addHelpText("after", `
++Example:
++  agnes video get video_123 --model agnes-video-2.5
++
++Request shape:
++  Sends one GET /agnesapi?video_id={video_id}&model_name={model} request. It does not poll.
++`)
++    .action(async (id, options) => {
++      const result = await client.video.get(id, {
++        timeoutMs: (options.timeout ?? 30) * 1000,
++        modelName: options.model,
++      });
++      if (options.json) {
++        printJson(result);
++        return;
++      }
++      printVideoResult(result);
++    });
++
+   video
+     .command("poll")
+     .description("Poll an Agnes video task until it finishes")
+     .argument("<video-or-task-id>", "Video id returned by Agnes video creation; task ids are accepted for legacy compatibility")
++    .option("--model <model>", `Video model used for model_name polling (default: ${DEFAULT_VIDEO_MODEL})`, DEFAULT_VIDEO_MODEL)
+     .option("--interval <seconds>", "Polling interval seconds", parseInteger, 5)
+     .option("--timeout <seconds>", "Polling timeout seconds", parseInteger, 600)
+     .option("--json", "Output JSON")
+     .addHelpText("after", `
+ Example:
+-  agnes video poll video_123 --interval 5 --timeout 600
++  agnes video poll video_123 --model agnes-video-2.5 --interval 2 --timeout 600
+ 
+ Request shape:
+-  Polls Agnes /agnesapi?video_id={video_id} until the task completes, fails, or times out. If you pass a task_ id, poll uses the legacy /videos/{task_id} endpoint for compatibility. Use this after any asynchronous video creation command.
++  Polls GET /agnesapi?video_id={video_id}&model_name={model} until the task completes, fails, or times out.
++  model_name is required by Agnes Video 2.5 for keyframe and reference tasks. If you pass a task_ id, the legacy /videos/{task_id} endpoint is used instead.
+ `)
+     .action(async (id, options) => {
+       const result = await client.video.poll(id, {
+         intervalSeconds: options.interval,
+         timeoutSeconds: options.timeout,
++        modelName: options.model,
+       });
+       if (options.json) {
+         printJson(result);
+         return;
+       }
+-      printLines([
+-        result.videoUrl,
+-        `status: ${result.status}`,
+-        result.seconds !== undefined ? `seconds: ${result.seconds}` : undefined,
+-        result.size ? `size: ${result.size}` : undefined,
+-      ]);
++      printVideoResult(result);
+     });
+ 
+   try {
+@@ -341,12 +432,19 @@ function buildVideoGenerateCommand(
+     .command(name)
+     .description(description)
+     .requiredOption("--prompt <text>", "Prompt text")
+-    .option("--width <number>", "Video width", parseInteger)
+-    .option("--height <number>", "Video height", parseInteger)
+-    .option("--num-frames <number>", "Video frame count, must satisfy 8n + 1", parseInteger)
+-    .option("--frame-rate <number>", "Frame rate (1-60)", parseInteger)
+-    .option("--seed <number>", "Seed", parseInteger)
+-    .option("--negative-prompt <text>", "Negative prompt")
++    .option("--model <model>", `Video model (default: ${DEFAULT_VIDEO_MODEL})`, DEFAULT_VIDEO_MODEL)
++    // Agnes Video 2.5 controls
++    .option("--seconds <number>", "Video 2.5 duration in seconds (4-12, default 5)", parseInteger)
++    .option("--size <tier>", `Video 2.5 resolution tier (${VIDEO_SIZE_TIERS.join(", ")})`)
++    .option("--aspect-ratio <ratio>", `Video 2.5 aspect ratio (${VIDEO_ASPECT_RATIOS.join(", ")})`)
++    .option("--n <number>", "Video 2.5 output count (only 1 is supported)", parseInteger)
++    .option("--seed <number>", "Seed (pass-through; undocumented for image models)", parseInteger)
++    // Legacy v2.0 controls
++    .option("--width <number>", "Legacy v2.0 only: video width", parseInteger)
++    .option("--height <number>", "Legacy v2.0 only: video height", parseInteger)
++    .option("--num-frames <number>", "Legacy v2.0 only: frame count (8n + 1, <= 441)", parseInteger)
++    .option("--frame-rate <number>", "Legacy v2.0 only: frame rate (1-60)", parseInteger)
++    .option("--negative-prompt <text>", "Legacy v2.0 only: negative prompt")
+     .option("--json", "Output JSON");
+   if (imageMode === "single") {
+     command = command
+@@ -365,15 +463,35 @@ function buildVideoGenerateCommand(
+       printJson(result);
+       return;
+     }
+-    const task = result as { taskId: string; videoId?: string; status: string };
++    const task = result as { taskId: string; videoId?: string; status: string; model?: string };
++    const model = task.model ?? options.model;
++    const pollId = task.videoId ?? task.taskId;
+     printLines([
+       `taskId: ${task.taskId}`,
+       task.videoId ? `videoId: ${task.videoId}` : undefined,
++      `model: ${model}`,
+       `status: ${task.status}`,
++      `next: agnes video poll ${pollId} --model ${model}`,
+     ]);
+   });
+ }
+ 
++function videoOptions(options: any): Record<string, unknown> {
++  return {
++    model: options.model,
++    seconds: options.seconds,
++    size: options.size,
++    aspectRatio: options.aspectRatio,
++    n: options.n,
++    seed: options.seed,
++    width: options.width,
++    height: options.height,
++    numFrames: options.numFrames,
++    frameRate: options.frameRate,
++    negativePrompt: options.negativePrompt,
++  };
++}
++
+ function handleCliError(error: unknown, argv: string[]): never {
+   const wantsJson = argv.includes("--json");
+   if (isAgnesCliError(error)) {
+@@ -430,22 +548,50 @@ function toJsonDetails(details: unknown): Record<string, unknown> {
+   return details as Record<string, unknown>;
+ }
+ 
++function formatModels(models: ReadonlyArray<{ id: string; status: string }>, defaultId: string): string {
++  return models
++    .map((model) => {
++      const flags = [
++        model.id === defaultId ? "default" : undefined,
++        model.status !== "current" ? model.status : undefined,
++      ].filter(Boolean);
++      return flags.length > 0 ? `${model.id} (${flags.join(", ")})` : model.id;
++    })
++    .join(", ");
++}
++
++function printVideoResult(result: {
++  videoUrl?: string;
++  status: string;
++  seconds?: number;
++  size?: string;
++  model?: string;
++}): void {
++  printLines([
++    result.videoUrl ? result.videoUrl : undefined,
++    `status: ${result.status}`,
++    result.model ? `model: ${result.model}` : undefined,
++    result.seconds !== undefined ? `seconds: ${result.seconds}` : undefined,
++    result.size ? `size: ${result.size}` : undefined,
++  ]);
++}
++
+ function buildVideoHelp(name: string, imageMode: false | "single" | "multi"): string {
+   const examples: Record<string, string> = {
+-    text2video: 'agnes video text2video --prompt "A cinematic beach scene at sunset"',
++    text2video: 'agnes video text2video --prompt "A cinematic beach scene at sunset" --seconds 5 --size 720P',
+     img2video: 'agnes video img2video --image ./frame.png --prompt "Add gentle wind and a soft push-in"',
+-    multivideo: 'agnes video multivideo --image ./a.png --image ./b.png --prompt "Blend these references into one motion concept"',
++    multivideo: 'agnes video multivideo --image ./a.png --image ./b.png --prompt "Use both images as references"',
+     keyframes: 'agnes video keyframes --image ./a.png --image ./b.png --prompt "Transition between these frames"',
+   };
+   const shapeNotes: Record<string, string> = {
+-    text2video: "Sends a prompt-only Agnes video task payload.",
+-    img2video: "Resolves the input file to a public URL when needed, then sends a single top-level image field.",
+-    multivideo: "Resolves each input to a public URL and sends an ordered Agnes image URL array in extra_body.image.",
+-    keyframes: "Uses Agnes keyframes mode. Pass --image at least twice; each image keeps its original order and is sent in extra_body.image with extra_body.mode=keyframes.",
++    text2video: "Sends `mode: \"text\"` to POST /v1/videos.",
++    img2video: "Resolves the input file to a public URL and sends it as `first_frame` in `keyframe` mode.",
++    multivideo: "Resolves each input to a public URL and sends them in the top-level `images` array in `reference` mode.",
++    keyframes: "Sends the first image as `first_frame` and the second as `last_frame` in `keyframe` mode.",
+   };
+   const imageNote =
+     imageMode === "multi"
+-      ? "Required image input: repeat --image two or more times."
++      ? "Required image input: repeat --image two or more times. Video 2.5 keyframe mode accepts exactly two; use this command with two keyframes, or multivideo for references."
+       : imageMode === "single"
+         ? "Required image input: provide exactly one --image."
+         : "No image input is required for this mode.";
+@@ -456,6 +602,7 @@ Example:
+ Request shape:
+   ${shapeNotes[name] ?? "Creates an Agnes video task."}
+   ${imageNote}
++  Video 2.5 by default (${DEFAULT_VIDEO_MODEL}). The retired v2.0 payload is only used with --model agnes-video-v2.0.
+ `;
+ }
+ 
+diff --git a/src/config.ts b/src/config.ts
+index 0b6ee19..722e5cc 100644
+--- a/src/config.ts
++++ b/src/config.ts
+@@ -5,6 +5,21 @@ export type TemporaryMediaProviderName = "litterbox" | "tmpfiles" | "uguu" | "x0
+ 
+ export type FetchLike = typeof fetch;
+ 
++/** Comma-separated provider order, e.g. `uguu,x0,litterbox,tmpfiles`. */
++export function parseMediaProviderOrder(value: string | undefined): TemporaryMediaProviderName[] | undefined {
++  if (!value?.trim()) return undefined;
++  const allowed: readonly TemporaryMediaProviderName[] = ["litterbox", "tmpfiles", "uguu", "x0"];
++  const names = value.split(",").map((entry) => entry.trim()).filter(Boolean);
++  const unknown = names.filter((name) => !(allowed as readonly string[]).includes(name));
++  if (unknown.length > 0) {
++    throw new AgnesCliError(
++      "INVALID_ENV",
++      `AGNES_MEDIA_PROVIDER_ORDER contains unknown provider(s): ${unknown.join(", ")}. Allowed: ${allowed.join(", ")}.`,
++    );
++  }
++  return names as TemporaryMediaProviderName[];
++}
++
+ export interface AgnesClientConfig {
+   apiKey?: string;
+   baseUrl?: string;
+@@ -44,14 +59,17 @@ export function resolveConfig(config: AgnesClientConfig = {}): ResolvedConfig {
+   if (!config.fetchImpl && typeof fetch !== "function") {
+     throw new AgnesCliError("FETCH_UNAVAILABLE", "Global fetch is unavailable in this Node runtime.");
+   }
++  const env = config.env ?? process.env;
+   return {
+-    apiKey: config.apiKey ?? config.env?.AGNES_API_KEY ?? process.env.AGNES_API_KEY,
+-    baseUrl: config.baseUrl ?? DEFAULT_BASE_URL,
++    apiKey: config.apiKey ?? env.AGNES_API_KEY,
++    // AGNES_BASE_URL lets callers switch to the .cn / alternate gateway without code changes.
++    baseUrl: config.baseUrl ?? env.AGNES_BASE_URL ?? DEFAULT_BASE_URL,
+     fetchImpl: config.fetchImpl ?? fetch,
+     defaultMediaTtl: config.defaultMediaTtl ?? DEFAULT_MEDIA_TTL,
+-    temporaryMediaProviderOrder: config.temporaryMediaProviderOrder,
++    temporaryMediaProviderOrder:
++      config.temporaryMediaProviderOrder ?? parseMediaProviderOrder(env.AGNES_MEDIA_PROVIDER_ORDER),
+     mediaProvider: config.mediaProvider,
+-    env: config.env ?? process.env,
++    env,
+   };
+ }
+ 
+diff --git a/src/env.ts b/src/env.ts
+new file mode 100644
+index 0000000..1f1b750
+--- /dev/null
++++ b/src/env.ts
+@@ -0,0 +1,72 @@
++import { existsSync, readFileSync } from "node:fs";
++import { dirname, resolve } from "node:path";
++
++export interface LoadLocalEnvOptions {
++  /** Directory to start the upward search from. Defaults to the current working directory. */
++  startDir?: string;
++  /** How many parent directories to search for `.env.local`. Defaults to 4. */
++  maxParents?: number;
++}
++
++/**
++ * Loads the nearest `.env.local` into `process.env` (existing variables win).
++ *
++ * The CLI entry point calls this so `agnes ...` works from inside this repo
++ * without exporting the key in every shell. Set `AGNES_NO_DOTENV=1` to disable
++ * it, or `AGNES_ENV_FILE=/path/to/file` to use an explicit file.
++ *
++ * This module is intentionally CLI-only; the JS API stays env/file-free.
++ */
++export function loadLocalEnv(options: LoadLocalEnvOptions = {}): string | undefined {
++  if (process.env.AGNES_NO_DOTENV === "1") return undefined;
++
++  const candidates = buildCandidatePaths(options);
++  for (const file of candidates) {
++    if (!existsSync(file)) continue;
++    try {
++      applyEnvFile(readFileSync(file, "utf8"));
++    } catch {
++      // An unreadable/invalid env file must not break CLI help or auth checks.
++    }
++    return file;
++  }
++  return undefined;
++}
++
++function buildCandidatePaths(options: LoadLocalEnvOptions): string[] {
++  if (process.env.AGNES_ENV_FILE) {
++    return [resolve(process.env.AGNES_ENV_FILE)];
++  }
++
++  const candidates: string[] = [];
++  let dir = resolve(options.startDir ?? process.cwd());
++  const maxParents = options.maxParents ?? 4;
++  for (let depth = 0; depth <= maxParents; depth += 1) {
++    candidates.push(resolve(dir, ".env.local"));
++    const parent = dirname(dir);
++    if (parent === dir) break;
++    dir = parent;
++  }
++  return candidates;
++}
++
++function applyEnvFile(text: string): void {
++  for (const line of text.split(/\r?\n/)) {
++    const trimmed = line.trim();
++    if (!trimmed || trimmed.startsWith("#")) continue;
++    const match = trimmed.match(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
++    if (!match) continue;
++    const key = match[1];
++    let value = match[2].trim();
++    if (
++      (value.startsWith('"') && value.endsWith('"')) ||
++      (value.startsWith("'") && value.endsWith("'"))
++    ) {
++      value = value.slice(1, -1);
++    }
++    // dotenv-style: never override variables that are already defined.
++    if (process.env[key] === undefined) {
++      process.env[key] = value;
++    }
++  }
++}
+diff --git a/src/http/requestJson.ts b/src/http/requestJson.ts
+index b3ac14e..1d5c4ae 100644
+--- a/src/http/requestJson.ts
++++ b/src/http/requestJson.ts
+@@ -1,18 +1,33 @@
+ import { AgnesCliError } from "../errors.js";
+ 
++export interface RequestJsonOptions {
++  retries?: number;
++  retryDelayMs?: number;
++  networkMessage?: string;
++  timeoutMs?: number;
++}
++
+ export async function requestJson(
+   fetchImpl: typeof fetch,
+   url: string,
+   init: RequestInit,
+-  options: { retries?: number; retryDelayMs?: number; networkMessage?: string } = {},
++  options: RequestJsonOptions = {},
+ ): Promise<{ response: Response; raw: unknown }> {
+-  const retries = options.retries ?? 2;
++  const method = (init.method ?? "GET").toUpperCase();
++  // Never retry non-idempotent POSTs by default: a timeout can mean Agnes
++  // already accepted (and billed) the request.
++  const isIdempotent = method === "GET" || method === "HEAD";
++  const retries = options.retries ?? (isIdempotent ? 2 : 0);
+   const retryDelayMs = options.retryDelayMs ?? 500;
++  const timeoutMs = options.timeoutMs ?? resolveHttpTimeoutMs();
++  const requestInit: RequestInit = init.signal
++    ? init
++    : { ...init, signal: AbortSignal.timeout(timeoutMs) };
+ 
+   let lastError: unknown;
+   for (let attempt = 0; attempt <= retries; attempt += 1) {
+     try {
+-      const response = await fetchImpl(url, init);
++      const response = await fetchImpl(url, requestInit);
+       const raw = await readResponseBody(response);
+       return { response, raw };
+     } catch (error) {
+@@ -73,6 +88,12 @@ function sanitizeResponseBody(value: unknown, depth = 0): unknown {
+   return value;
+ }
+ 
++function resolveHttpTimeoutMs(): number {
++  const raw = process.env.AGNES_HTTP_TIMEOUT_MS;
++  const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
++  return Number.isFinite(parsed) && parsed > 0 ? parsed : 120_000;
++}
++
+ function sleep(ms: number): Promise<void> {
+   return new Promise((resolve) => setTimeout(resolve, ms));
+ }
+diff --git a/src/image/normalizeImageRequest.ts b/src/image/normalizeImageRequest.ts
+index ea11ef3..9f85dd2 100644
+--- a/src/image/normalizeImageRequest.ts
++++ b/src/image/normalizeImageRequest.ts
+@@ -1,51 +1,77 @@
+ import { z } from "zod";
+ import type { Ttl } from "../config.js";
+ import { AgnesCliError } from "../errors.js";
++import {
++  DEFAULT_IMAGE_MODEL,
++  DEFAULT_IMAGE_SIZE,
++  IMAGE_MODELS,
++  IMAGE_RATIOS,
++  IMAGE_SIZE_TIERS,
++} from "../models.js";
++
++const imageModelSchema = z.enum(IMAGE_MODELS);
++
++const shared = {
++  model: imageModelSchema.optional(),
++  prompt: z.string().min(1),
++  size: z.string().min(1).optional(),
++  ratio: z.enum(IMAGE_RATIOS).optional(),
++  responseFormat: z.literal("url").optional(),
++  seed: z.number().int().optional(),
++};
+ 
+ export const imageGenerateSchema = z.discriminatedUnion("mode", [
+-  z.object({
+-    mode: z.literal("text2img"),
+-    model: z.enum(["agnes-image-2.1-flash", "agnes-image-2.0-flash"]).optional(),
+-    prompt: z.string().min(1),
+-    size: z.string().optional(),
+-    responseFormat: z.literal("url").optional(),
+-    seed: z.number().int().optional(),
+-  }),
++  z.object({ mode: z.literal("text2img"), ...shared }),
+   z.object({
+     mode: z.literal("img2img"),
+-    model: z.enum(["agnes-image-2.1-flash", "agnes-image-2.0-flash"]).optional(),
+     image: z.string().min(1),
+-    prompt: z.string().min(1),
+-    size: z.string().optional(),
+-    responseFormat: z.literal("url").optional(),
+-    seed: z.number().int().optional(),
+     ttl: z.enum(["1h", "12h", "24h", "72h"]).optional(),
++    ...shared,
+   }),
+   z.object({
+     mode: z.literal("compose"),
+-    model: z.enum(["agnes-image-2.1-flash", "agnes-image-2.0-flash"]).optional(),
+     images: z.array(z.string().min(1)).min(2),
+-    prompt: z.string().min(1),
+-    size: z.string().optional(),
+-    responseFormat: z.literal("url").optional(),
+-    seed: z.number().int().optional(),
+     ttl: z.enum(["1h", "12h", "24h", "72h"]).optional(),
++    ...shared,
+   }),
+ ]);
+ 
+ export type ImageGenerateOptions = z.infer<typeof imageGenerateSchema>;
+ 
++/** Accepts documented size tiers and legacy `WIDTHxHEIGHT` values. */
++export function validateImageSize(size: string): void {
++  const isTier = (IMAGE_SIZE_TIERS as readonly string[]).includes(size);
++  const isExact = /^\d{2,5}x\d{2,5}$/.test(size);
++  if (!isTier && !isExact) {
++    throw new AgnesCliError(
++      "INVALID_IMAGE_SIZE",
++      `Unsupported image size "${size}". Use a tier (${IMAGE_SIZE_TIERS.join(", ")}) or an exact WIDTHxHEIGHT value such as 1024x1024.`,
++    );
++  }
++}
++
+ export function normalizeImageRequest(
+   options: ImageGenerateOptions,
+   resolvedImages: string[],
+ ): Record<string, unknown> {
+-  const model = options.model ?? "agnes-image-2.1-flash";
++  const model = options.model ?? DEFAULT_IMAGE_MODEL;
++  const size = options.size ?? DEFAULT_IMAGE_SIZE;
++  validateImageSize(size);
++
++  if (options.ratio && model === "agnes-image-2.0-flash") {
++    throw new AgnesCliError(
++      "INVALID_IMAGE_OPTION",
++      "ratio is only documented for agnes-image-2.1-flash and agnes-image-2.5-flash. Agnes Image 2.0 uses exact sizes such as 1024x1024.",
++    );
++  }
++
+   const payload: Record<string, unknown> = {
+     model,
+     prompt: options.prompt,
++    size,
+   };
+ 
+-  if (options.size) payload.size = options.size;
++  if (options.ratio) payload.ratio = options.ratio;
+   if (options.seed !== undefined) payload.seed = options.seed;
+ 
+   if (options.mode === "text2img") {
+diff --git a/src/index.ts b/src/index.ts
+index 1cac6f5..0a179fb 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -1,5 +1,6 @@
+ import type { AgnesClientConfig } from "./config.js";
+ import { checkAuth } from "./auth/check.js";
++export * from "./models.js";
+ import { toPublicUrl } from "./media/toPublicUrl.js";
+ import { generateImage } from "./image/generateImage.js";
+ import { completeText } from "./text/complete.js";
+diff --git a/src/models.ts b/src/models.ts
+new file mode 100644
+index 0000000..23e9703
+--- /dev/null
++++ b/src/models.ts
+@@ -0,0 +1,97 @@
++/**
++ * Agnes AI model catalog and defaults.
++ *
++ * Source of truth (checked 2026-10-21):
++ *   https://wiki.agnes-ai.com/llms.txt
++ *   https://www.agnes-ai.com/en/docs/<model-slug>.md
++ *
++ * Keep this list in sync with the docs when Agnes ships new models.
++ */
++
++/* ------------------------------- text models ------------------------------ */
++
++export const TEXT_MODELS = [
++  "agnes-3.0-flash",
++  "agnes-2.5-flash",
++  "agnes-2.5-pro",
++  "agnes-2.5-pro-beta",
++  "agnes-2.0-flash",
++] as const;
++
++export type TextModel = (typeof TEXT_MODELS)[number];
++
++/** `agnes-2.0-flash` is deprecated upstream; it stays callable for migration. */
++export const DEPRECATED_TEXT_MODELS: readonly string[] = ["agnes-2.0-flash"];
++
++/** `agnes-3.0-pro` is announced as "coming soon" and is intentionally absent. */
++export const DEFAULT_TEXT_MODEL = "agnes-2.5-flash";
++
++/* ------------------------------ image models ------------------------------ */
++
++export const IMAGE_MODELS = [
++  "agnes-image-2.5-flash",
++  "agnes-image-2.1-flash",
++  "agnes-image-2.0-flash",
++] as const;
++
++export type ImageModel = (typeof IMAGE_MODELS)[number];
++
++export const DEFAULT_IMAGE_MODEL = "agnes-image-2.5-flash";
++
++/** Preferred tier-based size values. Exact sizes such as `1024x768` are also accepted. */
++export const IMAGE_SIZE_TIERS = ["1K", "2K", "3K", "4K"] as const;
++
++export const IMAGE_RATIOS = ["1:1", "3:4", "4:3", "16:9", "9:16", "2:3", "3:2", "21:9"] as const;
++
++/**
++ * Default output size. `1024x1024` is accepted by every image model, while
++ * tier sizes are the recommended form for 2.1/2.5.
++ */
++export const DEFAULT_IMAGE_SIZE = "1024x1024";
++
++/* ------------------------------ video models ------------------------------ */
++
++export const VIDEO_MODELS = ["agnes-video-2.5", "agnes-video-2.5-flash", "agnes-video-v2.0"] as const;
++
++export type VideoModel = (typeof VIDEO_MODELS)[number];
++
++/** Video v2.0 was retired upstream on 2026-09-25; kept for explicit legacy calls. */
++export const RETIRED_VIDEO_MODELS: readonly string[] = ["agnes-video-v2.0"];
++
++export const DEFAULT_VIDEO_MODEL = "agnes-video-2.5";
++
++export const VIDEO_SIZE_TIERS = ["720P", "1080P", "1K", "2K"] as const;
++
++export const VIDEO_ASPECT_RATIOS = ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] as const;
++
++/** Agnes Video 2.5 generation modes. */
++export const VIDEO_25_MODES = ["text", "keyframe", "reference"] as const;
++
++export const DEFAULT_VIDEO_SECONDS = 5;
++
++export const VIDEO_SECONDS = { min: 4, max: 12 } as const;
++
++export const DEFAULT_VIDEO_ASPECT_RATIO = "16:9";
++
++/** Flash is fixed to 720P and accepts at most 5 reference images. */
++export const VIDEO_25_FLASH_SIZE = "720P";
++export const VIDEO_25_FLASH_MAX_REFERENCE_IMAGES = 5;
++
++/** Full Video 2.5 accepts at most 8 reference images. */
++export const VIDEO_25_MAX_REFERENCE_IMAGES = 8;
++
++export function isLegacyVideoModel(model: string): boolean {
++  return model === "agnes-video-v2.0";
++}
++
++export function isVideo25Model(model: string): boolean {
++  return model === "agnes-video-2.5" || model === "agnes-video-2.5-flash";
++}
++
++export function isVideo25FlashModel(model: string): boolean {
++  return model === "agnes-video-2.5-flash";
++}
++
++export function isDeprecatedTextModel(model: string): boolean {
++  return DEPRECATED_TEXT_MODELS.includes(model);
++}
+diff --git a/src/text/complete.ts b/src/text/complete.ts
+index 9177f28..f9656f2 100644
+--- a/src/text/complete.ts
++++ b/src/text/complete.ts
+@@ -3,9 +3,10 @@ import type { AgnesClientConfig } from "../config.js";
+ import { resolveConfig } from "../config.js";
+ import { AgnesCliError } from "../errors.js";
+ import { requestJson } from "../http/requestJson.js";
++import { DEFAULT_TEXT_MODEL } from "../models.js";
+ 
+ const textCompleteSchema = z.object({
+-  model: z.string().default("agnes-2.0-flash"),
++  model: z.string().default(DEFAULT_TEXT_MODEL),
+   prompt: z.string().min(1),
+   stream: z.boolean().optional(),
+ });
+diff --git a/src/video/generateVideo.ts b/src/video/generateVideo.ts
+index 96f7674..5f16292 100644
+--- a/src/video/generateVideo.ts
++++ b/src/video/generateVideo.ts
+@@ -4,6 +4,7 @@ import { AgnesCliError } from "../errors.js";
+ import { requestJson } from "../http/requestJson.js";
+ import { toPublicUrl } from "../media/toPublicUrl.js";
+ import { collectVideoInputs, normalizeVideoRequest, type VideoGenerateOptions, videoGenerateSchema } from "./normalizeVideoRequest.js";
++import { DEFAULT_VIDEO_MODEL } from "../models.js";
+ 
+ export async function generateVideo(
+   options: VideoGenerateOptions,
+@@ -31,7 +32,7 @@ export async function generateVideo(
+   if (!response.ok) {
+     throw new AgnesCliError("AGNES_REQUEST_FAILED", `Agnes video request failed with HTTP ${response.status}.`, raw);
+   }
+-  return normalizeVideoTask(raw);
++  return normalizeVideoTask(raw, parsed.model);
+ }
+ 
+ async function resolveMediaInputs(inputs: string[], ttl: string | undefined, config: AgnesClientConfig): Promise<string[]> {
+@@ -47,7 +48,7 @@ async function resolveMediaInputs(inputs: string[], ttl: string | undefined, con
+   return resolved;
+ }
+ 
+-export function normalizeVideoTask(raw: unknown): NormalizedVideoTask {
++export function normalizeVideoTask(raw: unknown, fallbackModel = DEFAULT_VIDEO_MODEL): NormalizedVideoTask {
+   const record = ensureRecord(raw);
+   const taskId = extractTaskId(record);
+   const videoId = extractVideoId(record);
+@@ -58,7 +59,7 @@ export function normalizeVideoTask(raw: unknown): NormalizedVideoTask {
+     videoId,
+     status: normalizeStatus(rawStatus),
+     rawStatus,
+-    model: typeof record.model === "string" ? record.model : "agnes-video-v2.0",
++    model: typeof record.model === "string" ? record.model : fallbackModel,
+     raw,
+   };
+ }
+diff --git a/src/video/getVideo.ts b/src/video/getVideo.ts
+index b502c19..92ed55e 100644
+--- a/src/video/getVideo.ts
++++ b/src/video/getVideo.ts
+@@ -3,9 +3,12 @@ import { resolveConfig } from "../config.js";
+ import { AgnesCliError } from "../errors.js";
+ import { requestJson } from "../http/requestJson.js";
+ import { extractTaskId, extractVideoId, normalizeStatus } from "./generateVideo.js";
++import { DEFAULT_VIDEO_MODEL } from "../models.js";
+ 
+ export interface GetVideoOptions {
+   timeoutMs?: number;
++  /** Pass the model name to use the recommended `model_name` polling form (Video 2.5). */
++  modelName?: string;
+ }
+ 
+ export async function getVideo(
+@@ -18,7 +21,7 @@ export async function getVideo(
+     throw new AgnesCliError("AUTH_MISSING", "AGNES_API_KEY is required for Agnes requests.");
+   }
+ 
+-  const { response, raw } = await requestJson(resolved.fetchImpl, buildVideoGetUrl(resolved.baseUrl, id), {
++  const { response, raw } = await requestJson(resolved.fetchImpl, buildVideoGetUrl(resolved.baseUrl, id, options.modelName), {
+     headers: {
+       Authorization: `Bearer ${resolved.apiKey}`,
+     },
+@@ -35,13 +38,18 @@ export async function getVideo(
+     throw new AgnesCliError("SERVICE_BUSY", "Agnes video service is busy.", { id, status: "queued", raw });
+   }
+   if (!response.ok) {
+-    throw new AgnesCliError("AGNES_REQUEST_FAILED", `Agnes video status request failed with HTTP ${response.status}.`, { id, status: "failed", raw });
++    throw new AgnesCliError("AGNES_REQUEST_FAILED", `Agnes video status request failed with HTTP ${response.status}.`, {
++      id,
++      status: "failed",
++      httpStatus: response.status,
++      raw,
++    });
+   }
+ 
+-  return normalizeVideoStatus(raw);
++  return normalizeVideoStatus(raw, options.modelName ?? DEFAULT_VIDEO_MODEL);
+ }
+ 
+-export function normalizeVideoStatus(raw: unknown): NormalizedVideoStatus {
++export function normalizeVideoStatus(raw: unknown, fallbackModel = DEFAULT_VIDEO_MODEL): NormalizedVideoStatus {
+   if (!raw || typeof raw !== "object") {
+     throw new AgnesCliError("INVALID_RESPONSE", "Agnes video status response was not an object.", raw);
+   }
+@@ -64,7 +72,7 @@ export function normalizeVideoStatus(raw: unknown): NormalizedVideoStatus {
+     videoId,
+     status: status as AgnesStatus,
+     ...(rawStatus ? { rawStatus } : {}),
+-    model: typeof record.model === "string" ? record.model : "agnes-video-v2.0",
++    model: typeof record.model === "string" ? record.model : fallbackModel,
+     videoUrl,
+     seconds: coerceNumber(record.seconds),
+     size: typeof record.size === "string" ? record.size : undefined,
+@@ -73,12 +81,15 @@ export function normalizeVideoStatus(raw: unknown): NormalizedVideoStatus {
+   };
+ }
+ 
+-function buildVideoGetUrl(baseUrl: string, id: string): string {
++function buildVideoGetUrl(baseUrl: string, id: string, modelName?: string): string {
+   if (id.startsWith("task_")) {
+     return `${baseUrl.replace(/\/$/, "")}/videos/${encodeURIComponent(id)}`;
+   }
+   const url = new URL("/agnesapi", new URL(baseUrl));
+   url.searchParams.set("video_id", id);
++  // Video 2.5 recommends video_id + model_name for every mode; keyframe and
++  // reference tasks require it. Legacy task ids keep the /videos/{task_id} path.
++  if (modelName) url.searchParams.set("model_name", modelName);
+   return url.toString();
+ }
+ 
+diff --git a/src/video/normalizeVideoRequest.ts b/src/video/normalizeVideoRequest.ts
+index 5f1377a..750870b 100644
+--- a/src/video/normalizeVideoRequest.ts
++++ b/src/video/normalizeVideoRequest.ts
+@@ -1,22 +1,60 @@
+ import { z } from "zod";
+ import { DEFAULT_VIDEO_DIMENSIONS, DEFAULT_VIDEO_TEMPORAL, type Ttl } from "../config.js";
+ import { AgnesCliError } from "../errors.js";
++import {
++  DEFAULT_VIDEO_MODEL,
++  DEFAULT_VIDEO_SECONDS,
++  isLegacyVideoModel,
++  isVideo25FlashModel,
++  isVideo25Model,
++  VIDEO_25_FLASH_MAX_REFERENCE_IMAGES,
++  VIDEO_25_FLASH_SIZE,
++  VIDEO_25_MAX_REFERENCE_IMAGES,
++  VIDEO_ASPECT_RATIOS,
++  VIDEO_MODELS,
++  VIDEO_SECONDS,
++  VIDEO_SIZE_TIERS,
++} from "../models.js";
++
++const videoModelSchema = z.enum(VIDEO_MODELS);
+ 
+ const shared = {
++  model: videoModelSchema.optional(),
+   prompt: z.string().min(1),
++  seed: z.number().int().optional(),
++  // Agnes Video 2.5 controls
++  seconds: z.number().int().min(VIDEO_SECONDS.min).max(VIDEO_SECONDS.max).optional(),
++  size: z.enum(VIDEO_SIZE_TIERS).optional(),
++  aspectRatio: z.enum(VIDEO_ASPECT_RATIOS).optional(),
++  n: z.number().int().min(1).max(1).optional(),
++  // Legacy Agnes Video v2.0 controls (retired upstream on 2026-09-25)
+   width: z.number().int().positive().optional(),
+   height: z.number().int().positive().optional(),
+   numFrames: z.number().int().positive().optional(),
+   frameRate: z.number().int().positive().optional(),
+-  seed: z.number().int().optional(),
+   negativePrompt: z.string().min(1).optional(),
+ };
+ 
+ export const videoGenerateSchema = z.discriminatedUnion("mode", [
+   z.object({ mode: z.literal("text2video"), ...shared }),
+-  z.object({ mode: z.literal("img2video"), image: z.string().min(1), ttl: z.enum(["1h", "12h", "24h", "72h"]).optional(), ...shared }),
+-  z.object({ mode: z.literal("multivideo"), images: z.array(z.string().min(1)).min(2), ttl: z.enum(["1h", "12h", "24h", "72h"]).optional(), ...shared }),
+-  z.object({ mode: z.literal("keyframes"), images: z.array(z.string().min(1)).min(2), ttl: z.enum(["1h", "12h", "24h", "72h"]).optional(), ...shared }),
++  z.object({
++    mode: z.literal("img2video"),
++    image: z.string().min(1),
++    ttl: z.enum(["1h", "12h", "24h", "72h"]).optional(),
++    ...shared,
++  }),
++  z.object({
++    mode: z.literal("multivideo"),
++    images: z.array(z.string().min(1)).min(2),
++    ttl: z.enum(["1h", "12h", "24h", "72h"]).optional(),
++    ...shared,
++  }),
++  z.object({
++    mode: z.literal("keyframes"),
++    images: z.array(z.string().min(1)).min(2),
++    ttl: z.enum(["1h", "12h", "24h", "72h"]).optional(),
++    ...shared,
++  }),
+ ]);
+ 
+ export type VideoGenerateOptions = z.infer<typeof videoGenerateSchema>;
+@@ -38,15 +76,94 @@ export function collectVideoInputs(options: VideoGenerateOptions): { inputs: str
+ export function normalizeVideoRequest(
+   options: VideoGenerateOptions,
+   resolvedImages: string[],
++): Record<string, unknown> {
++  const model = options.model ?? DEFAULT_VIDEO_MODEL;
++
++  if (isLegacyVideoModel(model)) {
++    rejectVideo25OnlyOptions(options);
++    return normalizeLegacyVideoRequest(model, options, resolvedImages);
++  }
++  if (!isVideo25Model(model)) {
++    throw new AgnesCliError(
++      "INVALID_VIDEO_MODEL",
++      `Unsupported video model "${model}". Use one of: ${VIDEO_MODELS.join(", ")}.`,
++    );
++  }
++
++  rejectLegacyVideoOptions(options);
++  validateVideoSettings({
++    model,
++    mode: options.mode,
++    imageCount: resolvedImages.length,
++    seconds: options.seconds,
++    size: options.size,
++    aspectRatio: options.aspectRatio,
++  });
++  return normalizeVideo25Request(model, options, resolvedImages);
++}
++
++/** Video 2.5 payload (current API: POST /v1/videos with mode/seconds/size). */
++function normalizeVideo25Request(
++  model: string,
++  options: VideoGenerateOptions,
++  resolvedImages: string[],
++): Record<string, unknown> {
++  const payload: Record<string, unknown> = {
++    model,
++    prompt: options.prompt,
++    mode: videoModeFor25(options.mode),
++    seconds: String(options.seconds ?? DEFAULT_VIDEO_SECONDS),
++  };
++
++  // Flash only supports 720P; send it explicitly so the request is self-describing.
++  if (options.size) payload.size = options.size;
++  else if (isVideo25FlashModel(model)) payload.size = VIDEO_25_FLASH_SIZE;
++
++  if (options.aspectRatio) payload.aspect_ratio = options.aspectRatio;
++  if (options.seed !== undefined) payload.seed = options.seed;
++  if (options.n !== undefined) payload.n = options.n;
++
++  switch (options.mode) {
++    case "text2video":
++      break;
++    case "img2video":
++      payload.first_frame = resolvedImages[0];
++      break;
++    case "multivideo":
++      payload.images = resolvedImages;
++      break;
++    case "keyframes":
++      payload.first_frame = resolvedImages[0];
++      payload.last_frame = resolvedImages[1];
++      break;
++    default:
++      throw new AgnesCliError("INVALID_VIDEO_MODE", "Unsupported video generation mode.");
++  }
++
++  return payload;
++}
++
++/** Legacy Video v2.0 payload kept for explicit backwards-compatible calls/tests. */
++function normalizeLegacyVideoRequest(
++  model: string,
++  options: VideoGenerateOptions,
++  resolvedImages: string[],
+ ): Record<string, unknown> {
+   const width = options.width ?? DEFAULT_VIDEO_DIMENSIONS.width;
+   const height = options.height ?? DEFAULT_VIDEO_DIMENSIONS.height;
+   const numFrames = options.numFrames ?? DEFAULT_VIDEO_TEMPORAL.numFrames;
+   const frameRate = options.frameRate ?? DEFAULT_VIDEO_TEMPORAL.frameRate;
+-  validateVideoSettings({ numFrames, frameRate, mode: options.mode, imageCount: resolvedImages.length });
++
++  validateVideoSettings({
++    model,
++    numFrames,
++    frameRate,
++    mode: options.mode,
++    imageCount: resolvedImages.length,
++  });
+ 
+   const payload: Record<string, unknown> = {
+-    model: "agnes-video-v2.0",
++    model,
+     prompt: options.prompt,
+     width,
+     height,
+@@ -75,17 +192,139 @@ export function normalizeVideoRequest(
+   return payload;
+ }
+ 
+-export function validateVideoSettings({
+-  numFrames,
+-  frameRate,
+-  mode,
+-  imageCount,
+-}: {
+-  numFrames: number;
+-  frameRate: number;
++function videoModeFor25(mode: VideoGenerateOptions["mode"]): "text" | "keyframe" | "reference" {
++  switch (mode) {
++    case "text2video":
++      return "text";
++    case "img2video":
++    case "keyframes":
++      return "keyframe";
++    case "multivideo":
++      return "reference";
++    default:
++      throw new AgnesCliError("INVALID_VIDEO_MODE", "Unsupported video generation mode.");
++  }
++}
++
++function rejectVideo25OnlyOptions(options: VideoGenerateOptions): void {
++  const used = [
++    options.seconds !== undefined ? "--seconds" : undefined,
++    options.size !== undefined ? "--size" : undefined,
++    options.aspectRatio !== undefined ? "--aspect-ratio" : undefined,
++    options.n !== undefined ? "--n" : undefined,
++  ].filter(Boolean);
++  if (used.length > 0) {
++    throw new AgnesCliError(
++      "INVALID_VIDEO_SETTINGS",
++      `${used.join(", ")} require an Agnes Video 2.5 model. Select --model agnes-video-2.5 (or agnes-video-2.5-flash); ${options.model} is retired.`,
++    );
++  }
++}
++
++function rejectLegacyVideoOptions(options: VideoGenerateOptions): void {
++  const used = [
++    options.width !== undefined ? "--width" : undefined,
++    options.height !== undefined ? "--height" : undefined,
++    options.numFrames !== undefined ? "--num-frames" : undefined,
++    options.frameRate !== undefined ? "--frame-rate" : undefined,
++    options.negativePrompt !== undefined ? "--negative-prompt" : undefined,
++  ].filter(Boolean);
++  if (used.length > 0) {
++    throw new AgnesCliError(
++      "INVALID_VIDEO_SETTINGS",
++      `${used.join(", ")} belong to the retired Agnes Video v2.0 API and are not supported by ${options.model ?? DEFAULT_VIDEO_MODEL}. Use --seconds, --size and --aspect-ratio instead.`,
++    );
++  }
++}
++
++export interface VideoSettingsValidation {
++  model?: string;
+   mode: VideoGenerateOptions["mode"];
+   imageCount: number;
+-}): void {
++  /** Legacy v2.0 frame count. */
++  numFrames?: number;
++  /** Legacy v2.0 frame rate. */
++  frameRate?: number;
++  /** Video 2.5 duration in seconds. */
++  seconds?: number;
++  /** Video 2.5 resolution tier. */
++  size?: string;
++  /** Video 2.5 aspect ratio. */
++  aspectRatio?: string;
++}
++
++/** Validates model-specific video settings without touching the network. */
++export function validateVideoSettings(input: VideoSettingsValidation): void {
++  const model = input.model ?? DEFAULT_VIDEO_MODEL;
++
++  if (isLegacyVideoModel(model)) {
++    validateLegacyVideoSettings(input);
++    return;
++  }
++
++  if (!isVideo25Model(model)) {
++    throw new AgnesCliError("INVALID_VIDEO_MODEL", `Unsupported video model "${model}".`);
++  }
++
++  if (input.size === "1K" && input.aspectRatio && input.aspectRatio !== "1:1") {
++    throw new AgnesCliError(
++      "INVALID_VIDEO_SETTINGS",
++      "size 1K is a fixed 1024x1024 square output; use --aspect-ratio 1:1 or pick another size tier.",
++    );
++  }
++
++  const seconds = input.seconds ?? DEFAULT_VIDEO_SECONDS;
++  if (seconds < VIDEO_SECONDS.min || seconds > VIDEO_SECONDS.max) {
++    throw new AgnesCliError(
++      "INVALID_VIDEO_SETTINGS",
++      `seconds must be between ${VIDEO_SECONDS.min} and ${VIDEO_SECONDS.max}.`,
++    );
++  }
++
++  if (isVideo25FlashModel(model)) {
++    if (input.size && input.size !== VIDEO_25_FLASH_SIZE) {
++      throw new AgnesCliError(
++        "INVALID_VIDEO_SETTINGS",
++        `${model} only supports size ${VIDEO_25_FLASH_SIZE}.`,
++      );
++    }
++    if (input.imageCount > VIDEO_25_FLASH_MAX_REFERENCE_IMAGES) {
++      throw new AgnesCliError(
++        "INVALID_VIDEO_SETTINGS",
++        `${model} supports at most ${VIDEO_25_FLASH_MAX_REFERENCE_IMAGES} reference images.`,
++      );
++    }
++  } else if (input.imageCount > VIDEO_25_MAX_REFERENCE_IMAGES) {
++    throw new AgnesCliError(
++      "INVALID_VIDEO_SETTINGS",
++      `${model} supports at most ${VIDEO_25_MAX_REFERENCE_IMAGES} reference images.`,
++    );
++  }
++
++  if (input.mode === "img2video" && input.imageCount !== 1) {
++    throw new AgnesCliError("INVALID_VIDEO_SETTINGS", "img2video requires exactly one image.");
++  }
++  if (input.mode === "multivideo" && input.imageCount < 2) {
++    throw new AgnesCliError("INVALID_VIDEO_SETTINGS", "multivideo requires at least two images.");
++  }
++  if (input.mode === "keyframes") {
++    if (input.imageCount < 2) {
++      throw new AgnesCliError("INVALID_VIDEO_SETTINGS", "keyframes requires at least two images.");
++    }
++    if (input.imageCount > 2) {
++      throw new AgnesCliError(
++        "INVALID_VIDEO_SETTINGS",
++        "Agnes Video 2.5 keyframe mode supports exactly two images (first frame and last frame). Use `video multivideo` for image references.",
++      );
++    }
++  }
++}
++
++/** Legacy v2.0 validation: num_frames must be 8n + 1, <= 441 and frame_rate 1-60. */
++function validateLegacyVideoSettings(input: VideoSettingsValidation): void {
++  const numFrames = input.numFrames ?? DEFAULT_VIDEO_TEMPORAL.numFrames;
++  const frameRate = input.frameRate ?? DEFAULT_VIDEO_TEMPORAL.frameRate;
++
+   if (numFrames > 441) {
+     throw new AgnesCliError("INVALID_VIDEO_SETTINGS", "numFrames must be <= 441.");
+   }
+@@ -95,10 +334,10 @@ export function validateVideoSettings({
+   if (frameRate < 1 || frameRate > 60) {
+     throw new AgnesCliError("INVALID_VIDEO_SETTINGS", "frameRate must be between 1 and 60.");
+   }
+-  if (mode === "img2video" && imageCount !== 1) {
++  if (input.mode === "img2video" && input.imageCount !== 1) {
+     throw new AgnesCliError("INVALID_VIDEO_SETTINGS", "img2video requires exactly one image.");
+   }
+-  if ((mode === "multivideo" || mode === "keyframes") && imageCount < 2) {
+-    throw new AgnesCliError("INVALID_VIDEO_SETTINGS", `${mode} requires at least two images.`);
++  if ((input.mode === "multivideo" || input.mode === "keyframes") && input.imageCount < 2) {
++    throw new AgnesCliError("INVALID_VIDEO_SETTINGS", `${input.mode} requires at least two images.`);
+   }
+ }
+diff --git a/src/video/pollVideo.ts b/src/video/pollVideo.ts
+index da93d78..f279d1b 100644
+--- a/src/video/pollVideo.ts
++++ b/src/video/pollVideo.ts
+@@ -1,10 +1,12 @@
+ import type { AgnesClientConfig, NormalizedVideoResult } from "../config.js";
+-import { AgnesCliError } from "../errors.js";
++import { AgnesCliError, isAgnesCliError } from "../errors.js";
+ import { getVideo, normalizeVideoStatus } from "./getVideo.js";
+ 
+ export interface PollVideoOptions {
+   intervalSeconds?: number;
+   timeoutSeconds?: number;
++  /** Forwarded as `model_name` on the recommended Video 2.5 polling endpoint. */
++  modelName?: string;
+ }
+ 
+ export async function pollVideo(
+@@ -21,7 +23,18 @@ export async function pollVideo(
+       throw new AgnesCliError("POLL_TIMEOUT", "Agnes video polling timed out.", { id, status: "timed_out" });
+     }
+ 
+-    const result = await getVideo(id, {}, config);
++    let result;
++    try {
++      result = await getVideo(id, options.modelName ? { modelName: options.modelName } : {}, config);
++    } catch (error) {
++      // Network blips, 429s and 5xx are transient for an idempotent status GET:
++      // keep polling until the overall timeout instead of failing the task.
++      if (isTransientPollError(error) && Date.now() - started < timeoutMs) {
++        await sleep(intervalMs);
++        continue;
++      }
++      throw error;
++    }
+     if (result.status === "completed" && result.videoUrl) {
+       return {
+         ...result,
+@@ -43,6 +56,17 @@ export function normalizeVideoResult(raw: unknown): NormalizedVideoResult {
+   };
+ }
+ 
++function isTransientPollError(error: unknown): boolean {
++  if (!isAgnesCliError(error)) return false;
++  if (error.code === "SERVICE_BUSY" || error.code === "NETWORK_ERROR") return true;
++  if (error.code !== "AGNES_REQUEST_FAILED") return false;
++  const details = error.details && typeof error.details === "object"
++    ? error.details as Record<string, unknown>
++    : {};
++  const status = Number(details.httpStatus);
++  return status === 429 || status >= 500;
++}
++
+ function sleep(ms: number): Promise<void> {
+   return new Promise((resolve) => setTimeout(resolve, ms));
+ }
+diff --git a/test/cli/env-auth.test.mjs b/test/cli/env-auth.test.mjs
+new file mode 100644
+index 0000000..76abe3a
+--- /dev/null
++++ b/test/cli/env-auth.test.mjs
+@@ -0,0 +1,43 @@
++import test from "node:test";
++import assert from "node:assert/strict";
++import { spawnSync } from "node:child_process";
++import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { join, resolve, dirname } from "node:path";
++import { fileURLToPath } from "node:url";
++
++const here = dirname(fileURLToPath(import.meta.url));
++const cliPath = resolve(here, "../../bin/agnes.js");
++
++function cleanEnv(extra = {}) {
++  const env = { ...process.env, ...extra };
++  for (const key of ["AGNES_API_KEY", "AGNES_BASE_URL", "AGNES_ENV_FILE"]) delete env[key];
++  return env;
++}
++
++function run(cwd, args, env) {
++  return spawnSync(process.execPath, [cliPath, ...args], { cwd, env, encoding: "utf8" });
++}
++
++test("auth check exits non-zero when the key is missing", () => {
++  const cwd = mkdtempSync(join(tmpdir(), "agnes-cli-auth-"));
++  try {
++    const result = run(cwd, ["auth", "check", "--json"], cleanEnv({ AGNES_NO_DOTENV: "1" }));
++    assert.equal(result.status, 1);
++    assert.deepEqual(JSON.parse(result.stdout), { ok: false, configured: false, source: "missing" });
++  } finally {
++    rmSync(cwd, { recursive: true, force: true });
++  }
++});
++
++test("auth check loads the nearest .env.local from the CLI", () => {
++  const cwd = mkdtempSync(join(tmpdir(), "agnes-cli-auth-"));
++  try {
++    writeFileSync(join(cwd, ".env.local"), "AGNES_API_KEY=sk-fake-local-key\n");
++    const result = run(cwd, ["auth", "check", "--json"], cleanEnv());
++    assert.equal(result.status, 0);
++    assert.deepEqual(JSON.parse(result.stdout), { ok: true, configured: true, source: "env" });
++  } finally {
++    rmSync(cwd, { recursive: true, force: true });
++  }
++});
+diff --git a/test/cli/help.test.mjs b/test/cli/help.test.mjs
+index e7ccac2..eb68a9c 100644
+--- a/test/cli/help.test.mjs
++++ b/test/cli/help.test.mjs
+@@ -3,48 +3,81 @@ import assert from "node:assert/strict";
+ import { spawnSync } from "node:child_process";
+ import { fileURLToPath } from "node:url";
+ import { dirname, resolve } from "node:path";
++import { readFileSync } from "node:fs";
+ 
+ const here = dirname(fileURLToPath(import.meta.url));
+ const cliPath = resolve(here, "../../bin/agnes.js");
++const pkg = JSON.parse(readFileSync(resolve(here, "../../package.json"), "utf8"));
++
++const run = (...args) => spawnSync(process.execPath, [cliPath, ...args], { encoding: "utf8" });
+ 
+ test("root help renders", () => {
+-  const result = spawnSync(process.execPath, [cliPath, "--help"], {
+-    encoding: "utf8",
+-  });
++  const result = run("--help");
+   assert.equal(result.status, 0);
+   assert.match(result.stdout, /Agnes AI text, image, and video workflows/);
+   assert.match(result.stdout, /Examples:/);
++  assert.match(result.stdout, /agnes models/);
++});
++
++test("--version reports the patched package version", () => {
++  const result = run("--version");
++  assert.equal(result.status, 0);
++  assert.equal(result.stdout.trim(), pkg.version);
++});
++
++test("models command lists current defaults", () => {
++  const result = run("models", "--json");
++  assert.equal(result.status, 0);
++  const parsed = JSON.parse(result.stdout);
++  assert.equal(parsed.text.default, "agnes-2.5-flash");
++  assert.equal(parsed.image.default, "agnes-image-2.5-flash");
++  assert.equal(parsed.video.default, "agnes-video-2.5");
++  assert.ok(parsed.video.models.some((model) => model.id === "agnes-video-v2.0" && model.status === "retired"));
++  assert.ok(parsed.image.models.some((model) => model.id === "agnes-image-2.0-flash" && model.status === "legacy"));
+ });
+ 
+ test("text help renders", () => {
+-  const result = spawnSync(process.execPath, [cliPath, "text", "chat", "--help"], {
+-    encoding: "utf8",
+-  });
++  const result = run("text", "chat", "--help");
+   assert.equal(result.status, 0);
+   assert.match(result.stdout, /one-shot Agnes chat completion/);
+   assert.match(result.stdout, /\/chat\/completions/);
++  assert.match(result.stdout, /agnes-2\.5-flash/);
++});
++
++test("image help shows size and ratio flags", () => {
++  const result = run("image", "text2img", "--help");
++  assert.equal(result.status, 0);
++  assert.match(result.stdout, /--size/);
++  assert.match(result.stdout, /--ratio/);
++  assert.match(result.stdout, /agnes-image-2\.5-flash/);
++});
++
++test("video text2video help shows Video 2.5 controls", () => {
++  const result = run("video", "text2video", "--help");
++  assert.equal(result.status, 0);
++  assert.match(result.stdout, /--seconds/);
++  assert.match(result.stdout, /--size/);
++  assert.match(result.stdout, /--aspect-ratio/);
++  assert.match(result.stdout, /agnes-video-2\.5/);
++  assert.match(result.stdout, /retired/);
+ });
+ 
+ test("keyframes help renders", () => {
+-  const result = spawnSync(process.execPath, [cliPath, "video", "keyframes", "--help"], {
+-    encoding: "utf8",
+-  });
++  const result = run("video", "keyframes", "--help");
+   assert.equal(result.status, 0);
+   assert.match(result.stdout, /Generate a keyframe video/);
+   assert.match(result.stdout, /--image/);
+   assert.match(result.stdout, /Example:/);
+-  assert.match(result.stdout, /two or more times/);
+-  assert.match(result.stdout, /extra_body\.mode=keyframes/);
++  assert.match(result.stdout, /first_frame/);
++  assert.match(result.stdout, /last_frame/);
+ });
+ 
+-test("video poll help includes example and request-shape guidance", () => {
+-  const result = spawnSync(process.execPath, [cliPath, "video", "poll", "--help"], {
+-    encoding: "utf8",
+-  });
++test("video poll help includes model_name guidance", () => {
++  const result = run("video", "poll", "--help");
+   assert.equal(result.status, 0);
+   assert.match(result.stdout, /Example:/);
+-  assert.match(result.stdout, /\/agnesapi\?video_id=\{video_id\}/);
+-  assert.match(result.stdout, /asynchronous video creation command/);
++  assert.match(result.stdout, /\/agnesapi\?video_id=\{video_id\}&model_name=\{model\}/);
++  assert.match(result.stdout, /keyframe and reference/);
+ });
+ 
+ test("json errors are machine-readable", () => {
+diff --git a/test/unit/config.test.mjs b/test/unit/config.test.mjs
+new file mode 100644
+index 0000000..34a73ec
+--- /dev/null
++++ b/test/unit/config.test.mjs
+@@ -0,0 +1,41 @@
++import test from "node:test";
++import assert from "node:assert/strict";
++import { resolveConfig, DEFAULT_BASE_URL } from "../../dist/config.js";
++
++test("resolveConfig uses the default international base URL", () => {
++  const resolved = resolveConfig({ env: {} });
++  assert.equal(resolved.baseUrl, DEFAULT_BASE_URL);
++});
++
++test("resolveConfig honors AGNES_BASE_URL for alternate gateways", () => {
++  const resolved = resolveConfig({
++    env: {
++      AGNES_API_KEY: "test-key",
++      AGNES_BASE_URL: "https://api.agnes-ai.cn/v1",
++    },
++  });
++  assert.equal(resolved.baseUrl, "https://api.agnes-ai.cn/v1");
++  assert.equal(resolved.apiKey, "test-key");
++});
++
++test("explicit config.baseUrl wins over env", () => {
++  const resolved = resolveConfig({
++    baseUrl: "https://example.com/v1",
++    env: { AGNES_BASE_URL: "https://api.agnes-ai.cn/v1" },
++  });
++  assert.equal(resolved.baseUrl, "https://example.com/v1");
++});
++
++test("resolveConfig parses AGNES_MEDIA_PROVIDER_ORDER", () => {
++  const resolved = resolveConfig({
++    env: { AGNES_MEDIA_PROVIDER_ORDER: "uguu, x0 ,litterbox" },
++  });
++  assert.deepEqual(resolved.temporaryMediaProviderOrder, ["uguu", "x0", "litterbox"]);
++});
++
++test("resolveConfig rejects unknown media providers", () => {
++  assert.throws(
++    () => resolveConfig({ env: { AGNES_MEDIA_PROVIDER_ORDER: "uguu,dropbox" } }),
++    (error) => error.code === "INVALID_ENV",
++  );
++});
+diff --git a/test/unit/env.test.mjs b/test/unit/env.test.mjs
+new file mode 100644
+index 0000000..dbbc2b4
+--- /dev/null
++++ b/test/unit/env.test.mjs
+@@ -0,0 +1,72 @@
++import test from "node:test";
++import assert from "node:assert/strict";
++import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { loadLocalEnv } from "../../dist/env.js";
++
++const MANAGED_KEYS = ["AGNES_API_KEY", "AGNES_BASE_URL", "AGNES_NO_DOTENV", "AGNES_ENV_FILE", "TEST_DOTENV_VALUE"];
++
++function withCleanEnv(fn) {
++  const saved = Object.fromEntries(MANAGED_KEYS.map((key) => [key, process.env[key]]));
++  for (const key of MANAGED_KEYS) delete process.env[key];
++  try {
++    return fn();
++  } finally {
++    for (const key of MANAGED_KEYS) {
++      if (saved[key] === undefined) delete process.env[key];
++      else process.env[key] = saved[key];
++    }
++  }
++}
++
++function makeTempTree() {
++  const root = mkdtempSync(join(tmpdir(), "agnes-env-test-"));
++  const nested = join(root, "a", "b");
++  mkdirSync(nested, { recursive: true });
++  return { root, nested, cleanup: () => rmSync(root, { recursive: true, force: true }) };
++}
++
++test("loadLocalEnv walks up to the nearest .env.local", () => {
++  withCleanEnv(() => {
++    const tree = makeTempTree();
++    try {
++      writeFileSync(join(tree.root, ".env.local"), "AGNES_API_KEY=fake-from-file\nTEST_DOTENV_VALUE=hello\n");
++      const loaded = loadLocalEnv({ startDir: tree.nested });
++      assert.equal(loaded, join(tree.root, ".env.local"));
++      assert.equal(process.env.AGNES_API_KEY, "fake-from-file");
++      assert.equal(process.env.TEST_DOTENV_VALUE, "hello");
++    } finally {
++      tree.cleanup();
++    }
++  });
++});
++
++test("loadLocalEnv never overrides explicit environment variables", () => {
++  withCleanEnv(() => {
++    const tree = makeTempTree();
++    try {
++      writeFileSync(join(tree.root, ".env.local"), "AGNES_API_KEY=fake-from-file\n");
++      process.env.AGNES_API_KEY = "explicit-key";
++      loadLocalEnv({ startDir: tree.nested });
++      assert.equal(process.env.AGNES_API_KEY, "explicit-key");
++    } finally {
++      tree.cleanup();
++    }
++  });
++});
++
++test("AGNES_NO_DOTENV disables loading", () => {
++  withCleanEnv(() => {
++    const tree = makeTempTree();
++    try {
++      writeFileSync(join(tree.root, ".env.local"), "AGNES_API_KEY=fake-from-file\n");
++      process.env.AGNES_NO_DOTENV = "1";
++      const loaded = loadLocalEnv({ startDir: tree.nested });
++      assert.equal(loaded, undefined);
++      assert.equal(process.env.AGNES_API_KEY, undefined);
++    } finally {
++      tree.cleanup();
++    }
++  });
++});
+diff --git a/test/unit/image-generate.test.mjs b/test/unit/image-generate.test.mjs
+index 365280c..cb4cea0 100644
+--- a/test/unit/image-generate.test.mjs
++++ b/test/unit/image-generate.test.mjs
+@@ -3,7 +3,7 @@ import test from "node:test";
+ 
+ import { createAgnesClient } from "../../dist/index.js";
+ 
+-for (const model of ["agnes-image-2.1-flash", "agnes-image-2.0-flash"]) {
++for (const model of ["agnes-image-2.5-flash", "agnes-image-2.1-flash", "agnes-image-2.0-flash"]) {
+   test(`image.generate sends the documented img2img payload for ${model}`, async () => {
+     const requests = [];
+     const client = createAgnesClient({
+@@ -38,3 +38,25 @@ for (const model of ["agnes-image-2.1-flash", "agnes-image-2.0-flash"]) {
+     });
+   });
+ }
++
++test("image.generate defaults to Image 2.5 with a valid size", async () => {
++  const requests = [];
++  const client = createAgnesClient({
++    apiKey: "test-key",
++    fetchImpl: async (url, init) => {
++      requests.push({ url, init });
++      return Response.json({ data: [{ url: "https://cdn.example.com/output.png" }] });
++    },
++  });
++
++  await client.image.generate({
++    mode: "text2img",
++    prompt: "A silver watch on black stone.",
++  });
++
++  assert.deepEqual(JSON.parse(requests[0].init.body), {
++    model: "agnes-image-2.5-flash",
++    prompt: "A silver watch on black stone.",
++    size: "1024x1024",
++  });
++});
+diff --git a/test/unit/image-normalization.test.mjs b/test/unit/image-normalization.test.mjs
+index 9926112..79019a1 100644
+--- a/test/unit/image-normalization.test.mjs
++++ b/test/unit/image-normalization.test.mjs
+@@ -1,17 +1,27 @@
+ import test from "node:test";
+ import assert from "node:assert/strict";
+-import { normalizeImageRequest } from "../../dist/image/normalizeImageRequest.js";
++import { normalizeImageRequest, validateImageSize } from "../../dist/image/normalizeImageRequest.js";
+ 
+-test("normalizeImageRequest keeps text2img minimal", () => {
++test("normalizeImageRequest defaults to Image 2.5 and a valid size", () => {
+   const payload = normalizeImageRequest(
+     { mode: "text2img", prompt: "hello world" },
+     [],
+   );
+-  assert.equal(payload.model, "agnes-image-2.1-flash");
++  assert.equal(payload.model, "agnes-image-2.5-flash");
+   assert.equal(payload.prompt, "hello world");
++  assert.equal(payload.size, "1024x1024");
+   assert.equal("extra_body" in payload, false);
+ });
+ 
++test("normalizeImageRequest forwards tier size and ratio", () => {
++  const payload = normalizeImageRequest(
++    { mode: "text2img", prompt: "hello", size: "2K", ratio: "16:9" },
++    [],
++  );
++  assert.equal(payload.size, "2K");
++  assert.equal(payload.ratio, "16:9");
++});
++
+ test("normalizeImageRequest keeps a single 2.1 input image in an array", () => {
+   const payload = normalizeImageRequest(
+     {
+@@ -30,6 +40,20 @@ test("normalizeImageRequest keeps a single 2.1 input image in an array", () => {
+   assert.equal("tags" in payload, false);
+ });
+ 
++test("normalizeImageRequest supports image 2.5 explicitly", () => {
++  const payload = normalizeImageRequest(
++    {
++      mode: "img2img",
++      model: "agnes-image-2.5-flash",
++      image: "https://example.com/a.png",
++      prompt: "restyle",
++    },
++    ["https://example.com/a.png"],
++  );
++  assert.equal(payload.model, "agnes-image-2.5-flash");
++  assert.deepEqual(payload.extra_body.image, ["https://example.com/a.png"]);
++});
++
+ test("normalizeImageRequest uses the documented array shape for image 2.0", () => {
+   const payload = normalizeImageRequest(
+     {
+@@ -55,3 +79,20 @@ test("normalizeImageRequest keeps compose as an array", () => {
+   );
+   assert.deepEqual(payload.extra_body.image, ["https://example.com/a.png", "https://example.com/b.png"]);
+ });
++
++test("validateImageSize accepts tiers and exact sizes, rejects typos", () => {
++  for (const size of ["1K", "2K", "3K", "4K", "1024x1024", "1312x736"]) {
++    assert.doesNotThrow(() => validateImageSize(size));
++  }
++  assert.throws(() => validateImageSize("big"), (error) => error.code === "INVALID_IMAGE_SIZE");
++});
++
++test("image 2.0 rejects the undocumented ratio parameter", () => {
++  assert.throws(
++    () => normalizeImageRequest(
++      { mode: "text2img", model: "agnes-image-2.0-flash", prompt: "x", size: "1024x1024", ratio: "16:9" },
++      [],
++    ),
++    (error) => error.code === "INVALID_IMAGE_OPTION",
++  );
++});
+diff --git a/test/unit/request-json.test.mjs b/test/unit/request-json.test.mjs
+index d145aff..b3f0f1d 100644
+--- a/test/unit/request-json.test.mjs
++++ b/test/unit/request-json.test.mjs
+@@ -52,3 +52,33 @@ test("represents an empty HTTP error body as null", async () => {
+   assert.equal(response.status, 502);
+   assert.equal(raw, null);
+ });
++
++test("does not retry POST network failures by default (billing safety)", async () => {
++  let calls = 0;
++  const fetchImpl = async () => {
++    calls += 1;
++    throw new Error("socket hang up");
++  };
++
++  await assert.rejects(
++    () => requestJson(fetchImpl, "https://example.test/videos", { method: "POST" }, { retryDelayMs: 0 }),
++    (error) => error.code === "NETWORK_ERROR",
++  );
++  assert.equal(calls, 1);
++});
++
++test("retries idempotent GET network failures", async () => {
++  let calls = 0;
++  const fetchImpl = async () => {
++    calls += 1;
++    if (calls < 3) throw new Error("temporary dns failure");
++    return new Response(JSON.stringify({ ok: true }), {
++      status: 200,
++      headers: { "content-type": "application/json" },
++    });
++  };
++
++  const { response } = await requestJson(fetchImpl, "https://example.test/agnesapi", {}, { retryDelayMs: 0 });
++  assert.equal(response.status, 200);
++  assert.equal(calls, 3);
++});
+diff --git a/test/unit/text.test.mjs b/test/unit/text.test.mjs
+new file mode 100644
+index 0000000..80b4c59
+--- /dev/null
++++ b/test/unit/text.test.mjs
+@@ -0,0 +1,36 @@
++import test from "node:test";
++import assert from "node:assert/strict";
++import { completeText } from "../../dist/text/complete.js";
++
++function captureClient(response = { choices: [{ message: { content: "pong" } }] }) {
++  const requests = [];
++  const client = {
++    apiKey: "test-key",
++    baseUrl: "https://apihub.agnes-ai.com/v1",
++    fetchImpl: async (url, init) => {
++      requests.push({ url, init });
++      return Response.json(response);
++    },
++  };
++  return { client, requests };
++}
++
++test("completeText defaults to agnes-2.5-flash", async () => {
++  const { client, requests } = captureClient();
++  const result = await completeText({ prompt: "say pong" }, client);
++
++  assert.equal(result.text, "pong");
++  assert.equal(result.model, "agnes-2.5-flash");
++  assert.deepEqual(JSON.parse(requests[0].init.body), {
++    model: "agnes-2.5-flash",
++    messages: [{ role: "user", content: "say pong" }],
++  });
++});
++
++test("completeText accepts newer text models", async () => {
++  const { client, requests } = captureClient();
++  const result = await completeText({ prompt: "code", model: "agnes-3.0-flash" }, client);
++
++  assert.equal(result.model, "agnes-3.0-flash");
++  assert.equal(JSON.parse(requests[0].init.body).model, "agnes-3.0-flash");
++});
+diff --git a/test/unit/video-normalization.test.mjs b/test/unit/video-normalization.test.mjs
+index cc5a92d..9a4f0f3 100644
+--- a/test/unit/video-normalization.test.mjs
++++ b/test/unit/video-normalization.test.mjs
+@@ -3,34 +3,178 @@ import assert from "node:assert/strict";
+ import { normalizeVideoTask } from "../../dist/video/generateVideo.js";
+ import { normalizeVideoRequest, validateVideoSettings } from "../../dist/video/normalizeVideoRequest.js";
+ 
+-test("normalizeVideoRequest maps keyframes to extra_body.mode", () => {
++test("normalizeVideoRequest defaults to Video 2.5 text mode", () => {
++  const payload = normalizeVideoRequest(
++    { mode: "text2video", prompt: "waves at dusk" },
++    [],
++  );
++  assert.equal(payload.model, "agnes-video-2.5");
++  assert.equal(payload.mode, "text");
++  assert.equal(payload.seconds, "5");
++  assert.equal(payload.prompt, "waves at dusk");
++  assert.equal("width" in payload, false);
++  assert.equal("num_frames" in payload, false);
++});
++
++test("normalizeVideoRequest forwards Video 2.5 controls", () => {
++  const payload = normalizeVideoRequest(
++    {
++      mode: "text2video",
++      model: "agnes-video-2.5",
++      prompt: "waves",
++      seconds: 8,
++      size: "1080P",
++      aspectRatio: "9:16",
++      seed: 42,
++      n: 1,
++    },
++    [],
++  );
++  assert.equal(payload.seconds, "8");
++  assert.equal(payload.size, "1080P");
++  assert.equal(payload.aspect_ratio, "9:16");
++  assert.equal(payload.seed, 42);
++  assert.equal(payload.n, 1);
++});
++
++test("img2video maps to keyframe mode with first_frame", () => {
++  const payload = normalizeVideoRequest(
++    {
++      mode: "img2video",
++      image: "https://example.com/frame.png",
++      prompt: "animate",
++    },
++    ["https://example.com/frame.png"],
++  );
++  assert.equal(payload.mode, "keyframe");
++  assert.equal(payload.first_frame, "https://example.com/frame.png");
++  assert.equal("last_frame" in payload, false);
++});
++
++test("multivideo maps to reference mode with images", () => {
++  const images = ["https://example.com/a.png", "https://example.com/b.png"];
++  const payload = normalizeVideoRequest(
++    { mode: "multivideo", images, prompt: "reference" },
++    images,
++  );
++  assert.equal(payload.mode, "reference");
++  assert.deepEqual(payload.images, images);
++});
++
++test("keyframes maps first and last frame in order", () => {
++  const images = ["https://example.com/a.png", "https://example.com/b.png"];
++  const payload = normalizeVideoRequest(
++    { mode: "keyframes", images, prompt: "transition" },
++    images,
++  );
++  assert.equal(payload.mode, "keyframe");
++  assert.equal(payload.first_frame, images[0]);
++  assert.equal(payload.last_frame, images[1]);
++});
++
++test("Video 2.5 rejects legacy v2.0 frame options", () => {
++  assert.throws(
++    () => normalizeVideoRequest(
++      { mode: "text2video", prompt: "x", numFrames: 121, frameRate: 24 },
++      [],
++    ),
++    (error) => error.code === "INVALID_VIDEO_SETTINGS" && /retired/.test(error.message),
++  );
++});
++
++test("Video 2.5 keyframe mode accepts exactly two images", () => {
++  const images = ["https://example.com/a.png", "https://example.com/b.png", "https://example.com/c.png"];
++  assert.throws(
++    () => normalizeVideoRequest(
++      { mode: "keyframes", images, prompt: "transition" },
++      images,
++    ),
++    (error) => error.code === "INVALID_VIDEO_SETTINGS" && /exactly two images/.test(error.message),
++  );
++});
++
++test("Video 2.5 Flash enforces 720P and reference-image limits", () => {
++  assert.throws(
++    () => normalizeVideoRequest(
++      { mode: "text2video", model: "agnes-video-2.5-flash", prompt: "x", size: "1080P" },
++      [],
++    ),
++    (error) => error.code === "INVALID_VIDEO_SETTINGS",
++  );
++
++  const images = Array.from({ length: 6 }, (_, i) => `https://example.com/${i}.png`);
++  assert.throws(
++    () => normalizeVideoRequest(
++      { mode: "multivideo", model: "agnes-video-2.5-flash", images, prompt: "x" },
++      images,
++    ),
++    (error) => error.code === "INVALID_VIDEO_SETTINGS",
++  );
++});
++
++test("legacy v2.0 payload still works when explicitly selected", () => {
+   const payload = normalizeVideoRequest(
+     {
+       mode: "keyframes",
++      model: "agnes-video-v2.0",
+       images: ["https://example.com/a.png", "https://example.com/b.png"],
+       prompt: "transition",
++      numFrames: 121,
++      frameRate: 24,
+     },
+     ["https://example.com/a.png", "https://example.com/b.png"],
+   );
++  assert.equal(payload.model, "agnes-video-v2.0");
++  assert.equal(payload.num_frames, 121);
++  assert.equal(payload.frame_rate, 24);
+   assert.equal(payload.extra_body.mode, "keyframes");
+ });
+ 
+-test("validateVideoSettings enforces 8n + 1", () => {
++test("legacy v2.0 validation enforces 8n + 1", () => {
+   assert.throws(
+-    () => validateVideoSettings({ numFrames: 120, frameRate: 24, mode: "text2video", imageCount: 0 }),
++    () => validateVideoSettings({
++      model: "agnes-video-v2.0",
++      numFrames: 120,
++      frameRate: 24,
++      mode: "text2video",
++      imageCount: 0,
++    }),
+     /8n \+ 1/,
+   );
+ });
+ 
++test("Video 2.5 validation enforces seconds range", () => {
++  assert.throws(
++    () => validateVideoSettings({
++      model: "agnes-video-2.5",
++      mode: "text2video",
++      imageCount: 0,
++      seconds: 3,
++    }),
++    /seconds must be between/,
++  );
++});
++
+ test("normalizeVideoTask preserves the video_id returned by Agnes", () => {
+   const result = normalizeVideoTask({
+     id: "task_123",
+     task_id: "task_123",
+     video_id: "video_123",
+-    model: "agnes-video-v2.0",
++    model: "agnes-video-2.5",
+     status: "queued",
+   });
+ 
+   assert.equal(result.taskId, "task_123");
+   assert.equal(result.videoId, "video_123");
++  assert.equal(result.model, "agnes-video-2.5");
++});
++
++test("Video 2.5 rejects 1K with a non-square aspect ratio", () => {
++  assert.throws(
++    () => normalizeVideoRequest(
++      { mode: "text2video", prompt: "x", size: "1K", aspectRatio: "16:9" },
++      [],
++    ),
++    (error) => error.code === "INVALID_VIDEO_SETTINGS" && /1K is a fixed 1024x1024/.test(error.message),
++  );
+ });
+diff --git a/test/unit/video-poll.test.mjs b/test/unit/video-poll.test.mjs
+index 0d73897..214bdb5 100644
+--- a/test/unit/video-poll.test.mjs
++++ b/test/unit/video-poll.test.mjs
+@@ -191,3 +191,91 @@ test("normalizeVideoResult keeps incomplete legacy results compatible", () => {
+   assert.equal(result.status, "queued");
+   assert.equal(result.videoUrl, "");
+ });
++
++test("pollVideo forwards model_name for Video 2.5", async () => {
++  const requestedUrls = [];
++  const fetchImpl = async (url) => {
++    requestedUrls.push(url);
++    return new Response(JSON.stringify({
++      id: "task_123",
++      video_id: "video_123",
++      model: "agnes-video-2.5",
++      status: "completed",
++      url: "https://example.com/result.mp4",
++    }), {
++      status: 200,
++      headers: { "content-type": "application/json" },
++    });
++  };
++
++  const result = await pollVideo("video_123", { modelName: "agnes-video-2.5" }, {
++    apiKey: "test-key",
++    baseUrl: "https://apihub.agnes-ai.com/v1",
++    fetchImpl,
++  });
++
++  assert.equal(
++    requestedUrls[0],
++    "https://apihub.agnes-ai.com/agnesapi?video_id=video_123&model_name=agnes-video-2.5",
++  );
++  assert.equal(result.videoUrl, "https://example.com/result.mp4");
++});
++
++test("getVideo forwards model_name for Video 2.5 keyframe tasks", async () => {
++  const requestedUrls = [];
++  const fetchImpl = async (url) => {
++    requestedUrls.push(url);
++    return new Response(JSON.stringify({
++      id: "task_123",
++      video_id: "video_123",
++      model: "agnes-video-2.5",
++      status: "in_progress",
++    }), {
++      status: 200,
++      headers: { "content-type": "application/json" },
++    });
++  };
++
++  await getVideo("video_123", { modelName: "agnes-video-2.5" }, {
++    apiKey: "test-key",
++    baseUrl: "https://apihub.agnes-ai.com/v1",
++    fetchImpl,
++  });
++
++  assert.equal(
++    requestedUrls[0],
++    "https://apihub.agnes-ai.com/agnesapi?video_id=video_123&model_name=agnes-video-2.5",
++  );
++});
++
++test("pollVideo retries transient 503 responses until completion", async () => {
++  let calls = 0;
++  const fetchImpl = async () => {
++    calls += 1;
++    if (calls === 1) {
++      return new Response(JSON.stringify({ error: "busy" }), {
++        status: 503,
++        headers: { "content-type": "application/json" },
++      });
++    }
++    return new Response(JSON.stringify({
++      id: "task_123",
++      video_id: "video_123",
++      model: "agnes-video-2.5",
++      status: "completed",
++      url: "https://example.com/result.mp4",
++    }), {
++      status: 200,
++      headers: { "content-type": "application/json" },
++    });
++  };
++
++  const result = await pollVideo("video_123", { intervalSeconds: 0, modelName: "agnes-video-2.5" }, {
++    apiKey: "test-key",
++    baseUrl: "https://apihub.agnes-ai.com/v1",
++    fetchImpl,
++  });
++
++  assert.equal(calls, 2);
++  assert.equal(result.videoUrl, "https://example.com/result.mp4");
++});

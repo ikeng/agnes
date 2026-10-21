@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Golden Hour Stories | Agnes Image + Video</title>
+    <style>
+        :root {
+            --cream: #F9F7F2;
+            --blush: #F2E6E5;
+            --gold: #C5A065;
+            --gold-dark: #A68248;
+            --text: #2C2824;
+            --font-serif: 'Times New Roman', Times, serif;
+            --font-sans: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--cream);
+            color: var(--text);
+            font-family: var(--font-sans);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 40px;
+        }
+        h1, h2, h3, h4 {
+            font-family: var(--font-serif);
+            font-weight: 400;
+            margin: 0 0 20px 0;
+            letter-spacing: -0.02em;
+        }
+        .btn {
+            display: inline-block;
+            background-color: var(--gold);
+            color: #fff;
+            padding: 18px 40px;
+            text-decoration: none;
+            text-transform: uppercase;
+            font-size: 0.85rem;
+            letter-spacing: 0.15em;
+            transition: background 0.3s ease;
+            border: none;
+            cursor: pointer;
+        }
+        .btn:hover {
+            background-color: var(--gold-dark);
+        }
+        header {
+            padding: 40px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .logo {
+            font-family: var(--font-serif);
+            font-size: 1.5rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+        }
+        .nav-link {
+            color: var(--text);
+            text-decoration: none;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+        .hero {
+            padding: 120px 0;
+            text-align: center;
+            background: linear-gradient(to bottom, var(--cream), var(--blush));
+        }
+        .hero h1 {
+            font-size: 5rem;
+            line-height: 0.95;
+            color: var(--text);
+            margin-bottom: 30px;
+        }
+        .hero p {
+            font-size: 1.25rem;
+            max-width: 600px;
+            margin: 0 auto 50px;
+            color: #665c56;
+            font-family: var(--font-serif);
+            font-style: italic;
+        }
+        .campaign-narrative {
+            padding: 100px 0;
+            border-top: 1px solid #E5DFD6;
+        }
+        .narrative-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 60px;
+            align-items: center;
+        }
+        .narrative-text h2 {
+            font-size: 3rem;
+            line-height: 1.1;
+        }
+        .narrative-text p {
+            font-size: 1rem;
+            margin-bottom: 30px;
+            color: #555;
+        }
+        .narrative-visual {
+            height: 500px;
+            background-color: var(--gold);
+            position: relative;
+            overflow: hidden;
+        }
+        .narrative-visual::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(45deg, rgba(197, 160, 101, 0.4), rgba(44, 40, 36, 0.2));
+        }
+        .panels {
+            padding: 120px 0;
+            background-color: var(--blush);
+        }
+        .section-header {
+            text-align: center;
+            margin-bottom: 80px;
+        }
+        .section-header h3 {
+            font-size: 2.5rem;
+        }
+        .section-header p {
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.2em;
+            color: var(--gold-dark);
+        }
+        .panel-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 30px;
+        }
+        .panel {
+            background-color: var(--cream);
+            padding: 40px;
+            transition: transform 0.4s ease;
+        }
+        .panel:hover {
+            transform: translateY(-10px);
+        }
+        .panel-icon {
+            width: 60px;
+            height: 60px;
+            background-color: var(--gold);
+            margin-bottom: 30px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 1.5rem;
+            font-family: var(--font-serif);
+        }
+        .panel h4 {
+            font-size: 1.5rem;
+            margin-bottom: 15px;
+        }
+        .panel p {
+            font-size: 0.95rem;
+            color: #666;
+        }
+        .social-proof {
+            padding: 80px 0;
+            background-color: var(--cream);
+            text-align: center;
+        }
+        .proof-strip {
+            display: flex;
+            justify-content: center;
+            gap: 60px;
+            margin-top: 40px;
+            flex-wrap: wrap;
+        }
+        .proof-item {
+            text-align: center;
+        }
+        .proof-number {
+            font-family: var(--font-serif);
+            font-size: 3rem;
+            color: var(--gold);
+            display: block;
+            line-height: 1;
+        }
+        .proof-label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-top: 10px;
+            display: block;
+            color: #888;
+        }
+        .cta-section {
+            padding: 150px 0;
+            background-color: var(--text);
+            color: var(--cream);
+            text-align: center;
+        }
+        .cta-section h2 {
+            font-size: 4rem;
+            color: var(--gold);
+            margin-bottom: 30px;
+        }
+        .cta-section p {
+            font-size: 1.2rem;
+            margin-bottom: 50px;
+            color: #ccc;
+            max-width: 700px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .cta-section .btn {
+            background-color: var(--gold);
+        }
+        footer {
+            padding: 40px 0;
+            text-align: center;
+            font-size: 0.8rem;
+            color: #888;
+            background-color: var(--cream);
+        }
+        @media (max-width: 768px) {
+            .hero h1 { font-size: 3rem; }
+            .narrative-grid { grid-template-columns: 1fr; }
+            .panel-grid { grid-template-columns: 1fr; }
+            .proof-strip { gap: 30px; }
+            .container { padding: 0 20px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <header>
+            <div class="logo">AGNES + VIDEO</div>
+            <nav>
+                <a href="#" class="nav-link">Campaign</a>
+            </nav>
+        </header>
+    </div>
+
+    <section class="hero">
+        <div class="container">
+            <h1>GOLDEN HOUR<br>STORIES</h1>
+            <p>A curated visual journey capturing the ephemeral beauty of fleeting moments. Experience luxury through light.</p>
+            <a href="#cta" class="btn">View Collection</a>
+        </div>
+    </section>
+
+    <section class="campaign-narrative">
+        <div class="container">
+            <div class="narrative-grid">
+                <div class="narrative-text">
+                    <h2>THE ALCHEMY OF LIGHT</h2>
+                    <p>Golden Hour Stories is not merely a collection; it is an immersive editorial experience. We explore the intersection of high fashion and natural brilliance, where every frame tells a story of warmth, elegance, and timeless appeal.</p>
+                    <p>Our creative drop features exclusive imagery and cinematic video clips designed to elevate your digital presence. Crafted for the discerning eye, this campaign redefines the standard of premium content.</p>
+                    <a href="#" class="nav-link" style="border-bottom: 1px solid var(--text); padding-bottom: 5px;">Read the Manifesto</a>
+                </div>
+                <div class="narrative-visual"></div>
+            </div>
+        </div>
+    </section>
+
+    <section class="panels">
+        <div class="container">
+            <div class="section-header">
+                <p>The Collection</p>
+                <h3>THREE PERSPECTIVES</h3>
+            </div>
+            <div class="panel-grid">
+                <div class="panel">
+                    <div class="panel-icon">I</div>
+                    <h4>Visual Essays</h4>
+                    <p>High-resolution editorial photography capturing the essence of sunset hues and shadow play. Perfect for digital campaigns and print inspiration.</p>
+                </div>
+                <div class="panel">
+                    <div class="panel-icon">II</div>
+                    <h4>Cinematic Loops</h4>
+                    <p>Seamless video loops designed to bring life to static spaces. Experience motion in its most refined form, with a focus on texture and movement.</p>
+                </div>
+                <div class="panel">
+                    <div class="panel-icon">III</div>
+                    <h4>Brand Assets</h4>
+                    <p>Curated templates and overlays to integrate the Golden Hour aesthetic into your existing brand identity. Elevate your visual language instantly.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="social-proof">
+        <div class="container">
+            <div class="section-header">
+                <p>Impact</p>
+            </div>
+            <div class="proof-strip">
+                <div class="proof-item">
+                    <span class="proof-number" data-target="250">0</span>
+                    <span class="proof-label">Assets Included</span>
+                </div>
+                <div class="proof-item">
+                    <span class="proof-number" data-target="48">0</span>
+                    <span class="proof-label">Countries Reached</span>
+                </div>
+                <div class="proof-item">
+                    <span class="proof-number" data-target="12">0</span>
+                    <span class="proof-label">Industry Awards</span>
+                </div>
+                <div class="proof-item">
+                    <span class="proof-number" data-target="100">0</span>
+                    <span class="proof-label">Percent Premium</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="cta" class="cta-section">
+        <div class="container">
+            <h2>ACQUIRE THE DROP</h2>
+            <p>Join the list of creative directors and agencies transforming their visual narratives. Limited availability for the inaugural release.</p>
+            <a href="#" class="btn">Get Access Now</a>
+        </div>
+    </section>
+
+    <footer>
+        <div class="container">
+            <p>&copy; 2023 Agnes Image + Video. All rights reserved. Designed for Excellence.</p>
+        </div>
+    </footer>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const counters = document.querySelectorAll('.proof-number');
+            const speed = 200;
+
+            const animateCounters = () => {
+                counters.forEach(counter => {
+                    const target = +counter.getAttribute('data-target');
+                    const count = +counter.innerText;
+                    const inc = target / speed;
+
+                    if (count < target) {
+                        counter.innerText = Math.ceil(count + inc);
+                        setTimeout(animateCounters, 20);
+                    } else {
+                        counter.innerText = target;
+                    }
+                });
+            };
+
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        animateCounters();
+                        observer.unobserve(entry.target);
+                    }
+                });
+            }, { threshold: 0.5 });
+
+            const proofSection = document.querySelector('.social-proof');
+            if (proofSection) {
+                observer.observe(proofSection);
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,69 @@
+# Agnes-Ai Docs
+
+## Developer Guides
+
+### Get Started
+
+- [Overview](https://wiki.agnes-ai.com/en/docs/overview.md): Agnes AI API Online Documentation
+- [Quickstart](https://wiki.agnes-ai.com/en/docs/quickstart.md): Follow these step-by-step instructions to start using the Agnes AI API quickly and efficiently.
+
+### Use Guides
+
+#### Text
+
+- [Agnes 2.5 Flash](https://wiki.agnes-ai.com/en/docs/agnes-25-flash.md): Generally available upgrade of Agnes 2.0 Flash with improved coding capability, agent workflows, tool calling, and multimodal understanding.
+- [Agnes 2.5 Pro](https://wiki.agnes-ai.com/en/docs/agnes-25-pro.md): The commercial stable version of Agnes 2.5 Pro Beta for advanced coding, scientific reasoning, long-context analysis, agentic workflows, and multimodal understanding.
+- [Agnes 2.5 Pro Beta](https://wiki.agnes-ai.com/en/docs/agnes-25-pro-beta.md): Integrate Agnes 2.5 Pro Beta for advanced reasoning, coding, long-context analysis, agentic workflows, and multimodal understanding.
+- [Agnes 3.0 Flash](https://wiki.agnes-ai.com/en/docs/agnes-30-flash.md): A new-generation Agnes AI text model with stronger Agnes Code task execution, tool orchestration, and trustworthy delivery.
+- [Agnes 3.0 Pro](https://wiki.agnes-ai.com/en/docs/agnes-30-pro.md): A new-generation Pro model, coming soon, for agentic work, professional document analysis, scientific coding, and long-context reasoning.
+
+#### Image
+
+- [Agnes Image 2.0 Flash](https://wiki.agnes-ai.com/en/docs/agnes-image-20-flash.md): A high-performance image generation and editing model for text-to-image, image-to-image, and multi-image composition workflows.
+- [Agnes Image 2.1 Flash](https://wiki.agnes-ai.com/en/docs/agnes-image-21-flash.md): An upgraded image generation model optimized for high-information-density visuals, with support for text-to-image, image-to-image, and multi-image composition workflows.
+- [Agnes Image 2.5 Flash](https://wiki.agnes-ai.com/en/docs/agnes-image-25-flash.md): The latest-generation Agnes image model, with capabilities that comprehensively exceed Agnes Image 2.1 Flash and support for text-to-image, image-to-image, and multi-image composition.
+
+#### Video
+
+- [Agnes Video 2.5](https://wiki.agnes-ai.com/en/docs/agnes-video-25.md): Integrate Agnes Video 2.5 through an OpenAI Videos-compatible API for text-to-video, keyframe control, and multimodal reference generation.
+- [Agnes Video 2.5 Flash](https://wiki.agnes-ai.com/en/docs/agnes-video-25-flash.md): Integrate Agnes Video 2.5 Flash through an OpenAI Videos-compatible API for text-to-video, keyframe control, and image-reference generation.
+
+## Integration
+
+### Common Integration
+
+- [OpenClaw Integration Guide](https://wiki.agnes-ai.com/en/docs/cid1.md): OpenClaw Model Configuration Guide
+- [HermesAgents Integration Guide](https://wiki.agnes-ai.com/en/docs/cid2.md): HermesAgents Model Configuration Guide
+- [Claude CLI Integration Guide](https://wiki.agnes-ai.com/en/docs/cid3.md): Claude CLI Integration Guide for Agnes Models
+- [Claude Desktop  Integration Guide](https://wiki.agnes-ai.com/en/docs/cid4.md): Claude Desktop Integration Guide for Agnes Models
+- [WorkBuddy Integration Guide](https://wiki.agnes-ai.com/en/docs/cid5.md): WorkBuddy Integration Guide for Agnes Models
+- [Cherry Studio Integration Guide](https://wiki.agnes-ai.com/en/docs/cid6.md): Cherry Studio Integration Guide for Agnes Models
+- [Opencode Integration Guide](https://wiki.agnes-ai.com/en/docs/cid7.md): Opencode Integration Guide for Agnes Models
+- [Codex++ Integration Guide](https://wiki.agnes-ai.com/en/docs/cid8.md): Codex++ Agnes Model Configuration Guide
+
+## Token Plan
+
+- [Token Plan FAQ](https://wiki.agnes-ai.com/en/docs/tokenplan.md)
+
+## Pricing
+
+- [Model Pricing](https://wiki.agnes-ai.com/en/docs/pricing.md): List prices, current prices, and promotional billing rules for Agnes AI text, image, and video models on the international site.
+
+## FAQs
+
+- [FAQs](https://wiki.agnes-ai.com/en/docs/faqs.md): Frequently Asked Questions (FAQ)
+- [Common Error Codes](https://wiki.agnes-ai.com/en/docs/code.md): Agnes API Common Error Codes and Solutions
+
+## Legal
+
+- [Privacy Policy](https://wiki.agnes-ai.com/en/docs/privacy-policy.md): Agnes AI Privacy Policy
+- [Terms of Service](https://wiki.agnes-ai.com/en/docs/terms-of-service.md): Agnes AI Terms of Service
+
+> The links below point to documentation indexes. Follow each `/_llms/` index recursively until you reach documentation pages.
+
+## Indexes
+
+- [Simplified Chinese (26 pages)](https://wiki.agnes-ai.com/_llms/zh-hans.txt): Documentation for Simplified Chinese.
+
+
+This documentation is built and hosted on [Mintlify](https://mintlify.com), a developer documentation platform.

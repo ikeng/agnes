@@ -1,0 +1,57 @@
+{
+  "name": "agnes-ai-cli",
+  "version": "0.2.0-local.1",
+  "description": "CLI and JS API for Agnes text, image, and video workflows (patched local toolkit build).",
+  "type": "module",
+  "bin": {
+    "agnes": "bin/agnes.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "bin",
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
+    "test": "npm run build && node --test",
+    "lint": "npm run build",
+    "prepublishOnly": "npm test"
+  },
+  "keywords": [
+    "agnes",
+    "ai",
+    "cli",
+    "image-generation",
+    "video-generation"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^15.0.0",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jomeswang/agnes-ai-cli.git"
+  },
+  "homepage": "https://github.com/jomeswang/agnes-ai-cli#readme",
+  "bugs": {
+    "url": "https://github.com/jomeswang/agnes-ai-cli/issues"
+  },
+  "author": "jomeswang"
+}
