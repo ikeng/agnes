@@ -32,9 +32,9 @@ for skill in agnes-ai-skill agnes-ai-models; do
 done
 if [ "$skills_ok" = "1" ]; then t_ok; else t_fail "missing skill directory (agnes-ai-skill / agnes-ai-models)"; fi
 
-t_begin "CLI-first skill is version 1.3.0"
+t_begin "CLI-first skill is version 1.4.0"
 skill_version=$(sed -n 's/^version:[[:space:]]*//p' "$ROOT/skill/agnes-ai-skill/SKILL.md" 2>/dev/null | head -n 1)
-assert_eq "1.3.0" "$skill_version" "skill version" || true
+assert_eq "1.4.0" "$skill_version" "skill version" || true
 
 t_begin "official skill has an upstream provenance note"
 if [ -s "$ROOT/skill/agnes-ai-models/UPSTREAM.md" ]; then t_ok; else t_fail "missing skill/agnes-ai-models/UPSTREAM.md"; fi

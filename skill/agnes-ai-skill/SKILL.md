@@ -1,6 +1,6 @@
 ---
 name: agnes-ai-skill
-version: 1.3.0
+version: 1.4.0
 description: "Use when the user wants Agnes AI text, image, or video generation and should execute it through the agnes-ai-cli command line instead of hand-writing raw HTTP requests."
 tags:
   - agnes
@@ -684,15 +684,22 @@ comes up.
 
 ## Version History
 
+- `1.4.0` - Multi-account pools and batch production (2026-10-23, toolkit CLI
+  `0.3.0-local.1`): documents `agnes accounts list` /
+  `accounts check --live [--probe models|text]` (the models probe is
+  reachability-only; `--probe text` is the credential proof), account pools and
+  routing strategies, 429/`Retry-After` cooldowns and pool failover, create→poll
+  and session affinity, `agnes batch run|status|retry` with kind-aware defaults,
+  `defaultsByKind`, `modelSource` provenance, record vs strict consistency,
+  resume/retry without duplicate creates, and the
+  `INVALID_JOB`/`AMBIGUOUS_CREATE` safety rules.
 - `1.3.0` - Updated for Agnes docs of 2026-10-21 and the patched
   agnes-toolkit CLI: Video 2.5/2.5 Flash contract (create modes, `seconds`,
   `size`, `aspect_ratio`, `model_name` polling, retired v2.0), text defaults
   `agnes-2.5-flash` with `agnes-3.0-flash`/`2.5-pro`/`2.5-pro-beta`, image
   default `agnes-image-2.5-flash`, new `agnes models` command and flags,
   current `wiki.agnes-ai.com` doc links, and raw-HTTP fallbacks for
-  references/Base64/Responses/Messages. Maintained copy additionally documents
-  the toolkit CLI `0.3.0-local.1` multi-account pools and `agnes batch`
-  production workflow (2026-10-23).
+  references/Base64/Responses/Messages.
 - `1.2.2` - Added a linked Chinese README and Chinese quick-start onboarding
   guidance for agent responses.
 - `1.2.1` - Made `npx -y agnes-ai-cli@^0.1.0` the default copy-paste execution

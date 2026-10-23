@@ -143,7 +143,7 @@ else
   say "  official skill: up to date"
 fi
 if [ -n "$skill_remote_main" ]; then
-  say "  community skill main: $skill_remote_main (project skill has intentional 1.3.0 rewrites)"
+  say "  community skill main: $skill_remote_main (project skill has intentional 1.4.0 rewrites)"
 fi
 
 if [ "$UPDATE" = "1" ]; then

@@ -7,7 +7,7 @@ at the repo root).
 
 | Skill | Source | Use when |
 | --- | --- | --- |
-| [`agnes-ai-skill/`](./agnes-ai-skill/) | Maintained in this repo (base: `jomeswang/agnes-ai-skill` 1.2.2 → **1.3.0**) | You want an agent to **execute** Agnes text/image/video work through the patched `agnes` CLI. This is the CLI-first skill for this project. |
+| [`agnes-ai-skill/`](./agnes-ai-skill/) | Maintained in this repo (base: `jomeswang/agnes-ai-skill` 1.2.2 → **1.4.0**) | You want an agent to **execute** Agnes text/image/video work through the patched `agnes` CLI. This is the CLI-first skill for this project. |
 | [`agnes-ai-models/`](./agnes-ai-models/) | Vendored **official** skill from [`AgnesAI-Labs/skills`](https://github.com/AgnesAI-Labs/skills) at `99490234` (2026-09-24) | You need official **API integration** guidance: OpenAI SDK/curl patterns, model catalog, regional endpoint routing, troubleshooting. |
 
 ## Which one should an agent load?

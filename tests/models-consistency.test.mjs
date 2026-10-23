@@ -107,13 +107,13 @@ check("built CLI `models --json` matches the source catalog", () => {
   return "source == built CLI";
 });
 
-check("CLI-first skill (v1.3.0) references the current defaults", () => {
+check("CLI-first skill (v1.4.0) references the current defaults", () => {
   const skillPath = path.join("skill", "agnes-ai-skill", "SKILL.md");
   if (!existsSync(path.join(ROOT, skillPath))) throw new Error("missing skill/agnes-ai-skill/SKILL.md");
   const skill = read(skillPath);
   const versionMatch = skill.match(/^version:\s*(.+)$/m);
   const version = versionMatch ? versionMatch[1].trim() : "0.0.0";
-  if (!semverAtLeast(version, "1.3.0")) return `skipped model-claim checks: skill version ${version} < 1.3.0`;
+  if (!semverAtLeast(version, "1.4.0")) return `skipped model-claim checks: skill version ${version} < 1.4.0`;
   for (const [kind, id] of Object.entries({
     text: models.textDefault,
     image: models.imageDefault,

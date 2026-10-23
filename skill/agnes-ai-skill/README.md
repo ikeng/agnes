@@ -294,5 +294,5 @@ for example:
 
 ## Version History
 
-The skill version (`1.3.0`) and detailed change log are in
+The skill version (`1.4.0`) and detailed change log are in
 [`SKILL.md`](./SKILL.md#version-history).

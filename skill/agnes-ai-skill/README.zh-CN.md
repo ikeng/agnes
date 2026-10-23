@@ -25,7 +25,7 @@ Opencode, and other SKILL.md-compatible agent tools.
 
 ## 快速开始
 
-在 agnes-toolkit 仓库内（推荐，使用本目录的 1.3.0 更新版）：
+在 agnes-toolkit 仓库内（推荐，使用本目录的 1.4.0 更新版）：
 
 ```bash
 npm run install-local   # 构建并 link 补丁版 CLI，同时安装本 Skill

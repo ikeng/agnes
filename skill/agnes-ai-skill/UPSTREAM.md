@@ -7,7 +7,7 @@ installed into local agent skill directories by `scripts/install-local.sh`.
 - Vendored commit: `7e263a435a9177da7a4f5d81ff55d85c18e44acc` (2026-06-13)
 - Vendored version: `1.2.2`
 - Vendored on: 2026-10-21
-- Maintained version: **1.3.0** (see `SKILL.md` → Version History)
+- Maintained version: **1.4.0** (see `SKILL.md` → Version History)
 - Official reference for the update: <https://github.com/AgnesAI-Labs/skills>
   (`agnes-ai-models` skill, HEAD `99490234b5c5772987714df9b812479027e90cb7`,
   2026-09-24) + the official docs snapshot in `../../docs/upstream/`.
@@ -19,7 +19,12 @@ installed into local agent skill directories by `scripts/install-local.sh`.
   `agnes-image-2.5-flash` default, Video 2.5/2.5 Flash create + poll contract
   (`mode`/`seconds`/`size`/`aspect_ratio`/`model_name`), retired v2.0, new
   `agnes models` command and CLI flags, current `wiki.agnes-ai.com` doc links,
-  raw-HTTP fallbacks, safety/pricing caveats. Version bumped to `1.3.0`.
+  raw-HTTP fallbacks, safety/pricing caveats.
+- `SKILL.md`: 2026-10-23 multi-account + batch sections — `agnes accounts
+  list/check` (models vs `--probe text` credential proof), account pools,
+  routing limits/429 handling, create→poll/session affinity, and
+  `agnes batch run|status|retry` (kind-aware defaults, `defaultsByKind`,
+  `modelSource`, record vs strict, resume/retry). Version bumped to `1.4.0`.
 - `README.md`: rewritten as a maintained-copy README (current models, patched
   CLI, current sources, pricing caveats). The upstream 2.0-era showcase text is
   kept only as a pointer to `assets/` and `examples/` historical samples.
