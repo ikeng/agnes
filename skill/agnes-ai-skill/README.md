@@ -31,7 +31,8 @@ From the agnes-toolkit repo:
 ```bash
 npm run install-local   # builds + links the patched CLI and installs this skill
 agnes models            # show the current model catalog
-agnes auth check        # verify AGNES_API_KEY (never prints the key)
+agnes auth check        # verify the configured credential(s) (never prints keys)
+agnes accounts list     # redacted multi-account pool view
 ```
 
 For a standalone (non-agnes-toolkit) setup, a repository-aware installer can
@@ -82,11 +83,12 @@ Full details, parameters, limits, and gotchas:
 The skill targets the **patched** CLI vendored in the agnes-toolkit repo:
 
 - repo: `cli/` (upstream `jomeswang/agnes-ai-cli` v0.1.6 + local patches,
-  `0.2.0-local.1`)
+  `0.3.0-local.1`)
 - install: `npm run install-local` (or `cd cli && npm install && npm run build && npm link`)
 - catalog: `agnes models [--json]`
 - fallback only: `npx -y agnes-ai-cli@^0.1.0` — this is the stale upstream
-  0.1.6 build; it does **not** support Video 2.5 or image 2.5 defaults
+  0.1.6 build; it does **not** support Video 2.5, image 2.5 defaults,
+  multi-account routing, or `agnes batch`
 
 The patched CLI adds:
 
@@ -98,6 +100,58 @@ The patched CLI adds:
 - Video 2.5 polling via `video_id + model_name` (`video get` / `video poll` now
   accept `--model`)
 - explicit legacy Video v2.0 path only when `--model agnes-video-v2.0` is used
+- **multi-account routing** (`0.3.0-local.1`): indexed `AGNES_ACCOUNT_<ID>_*`
+  env or an accounts file, pools, adaptive/round-robin/weighted/
+  least-inflight/primary strategies, client-side RPM presets, 429 cooldowns,
+  safe failover, create→poll affinity journal, and `agnes accounts
+  list/check [--live]`
+- **batch production** (`0.3.0-local.1`): `agnes batch run/status/retry` with
+  JSON/JSONL jobs, bounded concurrency, `record`/`strict` consistency,
+  manifest/events/results artifacts, and resume without duplicate creates
+
+## Multi-account And Batch Production
+
+The patched CLI `0.3.0-local.1` can route across several Agnes accounts and run
+reproducible batch jobs. Skills/agents should use the CLI rather than re-implement
+rate-limit or affinity logic:
+
+```bash
+agnes accounts list               # redacted: key shown only as present (len=N)
+agnes accounts check --live       # GET /models reachability (free, NOT a credential proof)
+agnes accounts check --live --probe text  # real credential proof (one tiny chat per account)
+agnes --account main image text2img --prompt "..."        # force one account
+agnes --strategy round-robin image text2img --prompt "..." --json
+agnes image text2img --prompt "..." --affinity campaign-42 # sticky session
+agnes batch run jobs.json --out ./out
+agnes batch status ./out --json
+agnes batch retry ./out --only failed
+```
+
+Key rules this skill teaches agents:
+
+- Same-type keys on one account do **not** add rate limit; only distinct
+  accounts or key types are separate pools. Group keys that share a pool with
+  `POOL`.
+- `record` consistency (default) may mix accounts and records provenance per
+  job; `strict` pins one account for the whole batch (use when comparable output
+  matters).
+- A video task must be polled on the account that created it; the affinity
+  journal does this automatically (`video get/poll` never rotate accounts).
+- 429 is pool-level and handled by the CLI (`Retry-After`, cooldown, safe
+  failover for creates). `AMBIGUOUS_CREATE` is never auto-retried; check the
+  dashboard first.
+- Batch defaults are kind-aware (`defaultsByKind`; flat `defaults.model` is
+  catalog-filtered per kind) and each job records `model`/`modelSource`. Invalid
+  job params fail as non-retryable `INVALID_JOB`.
+- `--resume` skips succeeded jobs without duplicate creates and refuses changed
+  input.
+- Never print/echo keys or accounts-file contents; only
+  `present (len=N)` / `missing` is safe to show.
+
+Full CLI reference: `cli/README.md`. Detailed workflow and commands:
+[`SKILL.md`](./SKILL.md#multi-account-pools-and-batch-production-2026-10).
+
+
 
 ## Install
 
@@ -176,6 +230,9 @@ only a base URL, API key, and model name change.
   mode 600) and is never printed, logged, or committed
 - Live payloads and response handling stay grounded in the official Agnes docs
   and real API behaviour, not only in marketing copy
+- Multi-account keys are treated as secrets too: agents may inspect redacted
+  `agnes accounts list/check` output but never print key material or accounts
+  files
 
 ## Manual Install
 
@@ -195,6 +252,10 @@ for example:
 - How to make the smallest reliable live request first
 - How to create a Video 2.5 task, then poll with `video_id + model_name` until
   completion
+- How to configure and inspect multi-account pools, route/pin accounts, and run
+  resumable batch production jobs with the patched CLI
+- Why create→poll affinity and `strict` consistency matter for mixed-account
+  batches
 - Which paths need raw HTTP (audio/video references, Base64 image output,
   last-frame-only keyframes, Responses/Messages APIs)
 

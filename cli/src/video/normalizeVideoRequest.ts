@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { DEFAULT_VIDEO_DIMENSIONS, DEFAULT_VIDEO_TEMPORAL, type Ttl } from "../config.js";
 import { AgnesCliError } from "../errors.js";
+import { routeOptionsSchema } from "../accounts/route.js";
 import {
   DEFAULT_VIDEO_MODEL,
   DEFAULT_VIDEO_SECONDS,
@@ -33,6 +34,7 @@ const shared = {
   numFrames: z.number().int().positive().optional(),
   frameRate: z.number().int().positive().optional(),
   negativePrompt: z.string().min(1).optional(),
+  route: routeOptionsSchema,
 };
 
 export const videoGenerateSchema = z.discriminatedUnion("mode", [

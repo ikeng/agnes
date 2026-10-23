@@ -1,8 +1,10 @@
 import type { AgnesClientConfig, ImageGenerationResult } from "../config.js";
-import { resolveConfig } from "../config.js";
+import { resolveClientConfig } from "../config.js";
 import { AgnesCliError } from "../errors.js";
 import { requestJson } from "../http/requestJson.js";
 import { toPublicUrl } from "../media/toPublicUrl.js";
+import { DEFAULT_IMAGE_SIZE } from "../models.js";
+import { routingInfo } from "../accounts/route.js";
 import { collectImageInputs, imageGenerateSchema, normalizeImageRequest, type ImageGenerateOptions } from "./normalizeImageRequest.js";
 
 export async function generateImage(
@@ -10,7 +12,7 @@ export async function generateImage(
   config: AgnesClientConfig = {},
 ): Promise<ImageGenerationResult> {
   const parsed = imageGenerateSchema.parse(options);
-  const resolved = resolveConfig(config);
+  const resolved = resolveClientConfig(config);
   if (!resolved.apiKey) {
     throw new AgnesCliError("AUTH_MISSING", "AGNES_API_KEY is required for Agnes requests.");
   }
@@ -18,17 +20,36 @@ export async function generateImage(
   const { inputs, ttl } = collectImageInputs(parsed);
   const resolvedImages = await resolveMediaInputs(inputs, ttl, config);
   const payload = normalizeImageRequest(parsed, resolvedImages);
+  const route = parsed.route;
+  const effectiveSize = parsed.size ?? DEFAULT_IMAGE_SIZE;
 
-  const { response, raw } = await requestJson(resolved.fetchImpl, `${resolved.baseUrl}/images/generations`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${resolved.apiKey}`,
-      "Content-Type": "application/json",
+  const routed = await resolved.router.execute(
+    {
+      ...(route ?? {}),
+      workload: "image",
+      model: String(payload.model),
+      size: effectiveSize,
+      method: "POST",
     },
-    body: JSON.stringify(payload),
-  }, {
-    networkMessage: "Agnes image request failed before a response was received.",
-  });
+    (account) =>
+      requestJson(
+        resolved.fetchImpl,
+        `${(account.baseUrl ?? resolved.baseUrl).replace(/\/$/, "")}/images/generations`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${account.key}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        },
+        {
+          networkMessage: "Agnes image request failed before a response was received.",
+          retries: 0,
+        },
+      ),
+  );
+  const { response, raw } = routed.value;
   if (!response.ok) {
     throw new AgnesCliError("AGNES_REQUEST_FAILED", `Agnes image request failed with HTTP ${response.status}.`, raw);
   }
@@ -41,6 +62,9 @@ export async function generateImage(
     model: String(payload.model),
     url,
     raw,
+    accountId: routed.accountId,
+    poolId: routed.poolId,
+    routing: routingInfo(routed, route?.strategy ?? resolved.router.config.strategy),
   };
 }
 

@@ -4,8 +4,12 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { saveKeyToShell } from "./auth/saveKey.js";
 import { loadLocalEnv } from "./env.js";
-import { createAgnesClient } from "./index.js";
-import { isAgnesCliError } from "./errors.js";
+import { createAgnesClient, type AgnesClient } from "./index.js";
+import { isAgnesCliError, AgnesCliError } from "./errors.js";
+import { resolveConfig, type AgnesClientConfig, type ResolvedConfig } from "./config.js";
+import { registerAccountsCommands } from "./accounts/cli.js";
+import { registerBatchCommands } from "./batch/cli.js";
+import { ROUTING_STRATEGIES, type RouteOptions, type RoutingStrategy } from "./accounts/types.js";
 import {
   DEFAULT_IMAGE_MODEL,
   DEFAULT_IMAGE_SIZE,
@@ -35,21 +39,75 @@ export async function runCli(argv = process.argv): Promise<void> {
     .name("agnes")
     .description("CLI for Agnes AI text, image, and video workflows, with auth and media URL bridging")
     .version(pkg.version)
+    .option("--account <id>", "Force one configured account for this invocation (disables failover)")
+    .option(
+      "--strategy <strategy>",
+      `Routing strategy override for this invocation (${ROUTING_STRATEGIES.join(", ")})`,
+    )
     .addHelpText("after", `
 Examples:
   agnes models
   agnes auth check
+  agnes accounts list
   agnes media url ./input.png
   agnes image text2img --prompt "A luminous city at sunrise" --size 2K --ratio 16:9
   agnes image img2img --image ./input.png --prompt "Turn this into an editorial campaign"
   agnes video text2video --prompt "A cinematic beach scene at sunset" --seconds 5 --size 720P
   agnes video keyframes --image ./a.png --image ./b.png --prompt "Transition between these frames"
   agnes video poll video_123 --model agnes-video-2.5
+  agnes batch run jobs.json --out ./out
+
+Multi-account routing:
+  export AGNES_ACCOUNT_MAIN_KEY=sk-...       # indexed env accounts
+  export AGNES_ACCOUNT_MAIN_TYPE=tokenplan
+  agnes --strategy round-robin text chat --prompt "Reply with exactly pong."
+  agnes --account main image text2img --prompt "A silver watch on black stone"
 
 Models and docs: https://wiki.agnes-ai.com/llms.txt
 `);
 
-  const client = createAgnesClient();
+  // One resolved config + one client (one router) for the whole invocation:
+  // cooldowns, token buckets and affinity stay shared across commands, but the
+  // config is resolved lazily so --help/--version never need a valid account set.
+  let cachedResolved: ResolvedConfig | undefined;
+  let cachedClient: AgnesClient | undefined;
+  const getResolved = (): ResolvedConfig => {
+    if (!cachedResolved) {
+      const globals = program.opts();
+      const overrides: AgnesClientConfig = {};
+      if (globals.strategy) overrides.strategy = parseStrategyFlag(globals.strategy);
+      cachedResolved = resolveConfig(overrides);
+    }
+    return cachedResolved;
+  };
+  const getClient = (): AgnesClient => {
+    if (!cachedClient) cachedClient = createAgnesClient(getResolved());
+    return cachedClient;
+  };
+  const getRoute = (): RouteOptions => {
+    const globals = program.opts();
+    const route: RouteOptions = {};
+    if (globals.account) route.accountId = String(globals.account).toLowerCase();
+    if (globals.strategy) route.strategy = parseStrategyFlag(globals.strategy);
+    return route;
+  };
+  const getRouteFor = (options: { affinity?: unknown }): RouteOptions => {
+    const route = getRoute();
+    const affinity = typeof options.affinity === "string" && options.affinity.trim() ? options.affinity.trim() : undefined;
+    if (affinity) route.affinityKey = `session:${affinity}`;
+    return route;
+  };
+  const printAccountNotice = (result: unknown): void => {
+    const accountId = (result as { accountId?: unknown } | undefined)?.accountId;
+    if (typeof accountId !== "string") return;
+    if (getResolved().accountsConfig.accounts.length > 1) {
+      // stdout stays machine-readable; the routing provenance notice goes to stderr.
+      console.error(`account: ${accountId}`);
+    }
+  };
+
+  registerAccountsCommands(program, { getResolved });
+  registerBatchCommands(program, () => getClient());
 
   const models = program.command("models").description("List supported Agnes models and defaults");
   models
@@ -99,19 +157,21 @@ Examples:
   agnes auth save-key --key sk-...
 
 Use this group to verify AGNES_API_KEY or persist it into the active shell rc file.
+With AGNES_ACCOUNT_* configured, auth check also reports the pool/account summary.
 `);
   auth
     .command("check")
-    .description("Check whether AGNES_API_KEY is configured")
+    .description("Check whether Agnes credentials are configured")
     .option("--json", "Output JSON")
     .action((options) => {
-      const result = client.auth.check();
+      const result = getClient().auth.check();
       if (options.json) {
         printJson(result);
       } else {
         printLines([
           result.configured ? "AGNES_API_KEY is configured." : "AGNES_API_KEY is missing.",
           `source: ${result.source}`,
+          `accounts: ${result.accounts}   pools: ${result.pools.join(", ") || "-"}   strategy: ${result.strategy}`,
         ]);
       }
       if (!result.configured) {
@@ -150,7 +210,7 @@ Use this group when Agnes requires a public image URL and your source asset is a
     .option("--ttl <ttl>", "Temporary upload TTL (1h, 12h, 24h, 72h)", "1h")
     .option("--json", "Output JSON")
     .action(async (input, options) => {
-      const result = await client.media.toPublicUrl(input, { ttl: ttlSchema.parse(options.ttl) });
+      const result = await getClient().media.toPublicUrl(input, { ttl: ttlSchema.parse(options.ttl) });
       if (options.json) {
         printJson(result);
         return;
@@ -162,6 +222,7 @@ Use this group when Agnes requires a public image URL and your source asset is a
   text.addHelpText("after", `
 Examples:
   agnes text chat --prompt "Reply with exactly pong."
+  agnes --account main text chat --prompt "Reply with exactly pong."
   agnes text chat --model agnes-3.0-flash --prompt "Write a TypeScript function"
 
 Use this group for Agnes chat/completions request shapes when you want a minimal one-shot text call through the CLI.
@@ -171,6 +232,7 @@ Use this group for Agnes chat/completions request shapes when you want a minimal
     .description("Run a one-shot Agnes chat completion")
     .requiredOption("--prompt <text>", "Prompt text")
     .option("--model <model>", `Agnes text model (default: ${DEFAULT_TEXT_MODEL})`, DEFAULT_TEXT_MODEL)
+    .option("--affinity <name>", "Sticky session name: repeat with the same value to keep one account")
     .option("--json", "Output JSON")
     .addHelpText("after", `
 Example:
@@ -184,15 +246,17 @@ Request shape:
       if (isDeprecatedTextModel(options.model)) {
         console.error(`warning: ${options.model} is deprecated by Agnes. Prefer ${DEFAULT_TEXT_MODEL}.`);
       }
-      const result = await client.text.complete({
+      const result = await getClient().text.complete({
         prompt: options.prompt,
         model: options.model,
+        route: getRouteFor(options),
       });
       if (options.json) {
         printJson(result);
         return;
       }
       console.log(result.text);
+      printAccountNotice(result);
     });
 
   const image = program.command("image").description("Generate Agnes images");
@@ -212,6 +276,7 @@ Use this group for /images/generations request shapes. text2img sends prompt-onl
     .option("--size <size>", `Image size tier (${IMAGE_SIZE_TIERS.join(", ")}) or WIDTHxHEIGHT (default: ${DEFAULT_IMAGE_SIZE})`)
     .option("--ratio <ratio>", `Aspect ratio (${IMAGE_RATIOS.join(", ")})`)
     .option("--seed <number>", "Seed (pass-through; undocumented for image models)", parseInteger)
+    .option("--affinity <name>", "Sticky session name: repeat with the same value to keep one account")
     .option("--json", "Output JSON")
     .addHelpText("after", `
 Example:
@@ -222,19 +287,21 @@ Request shape:
   Pass --size as a tier (1K, 2K, 3K, 4K) or an exact legacy size (e.g. 1024x1024).
 `)
     .action(async (options) => {
-      const result = await client.image.generate({
+      const result = await getClient().image.generate({
         mode: "text2img",
         prompt: options.prompt,
         model: options.model,
         size: options.size,
         ratio: options.ratio,
         seed: options.seed,
+        route: getRouteFor(options),
       });
       if (options.json) {
         printJson(result);
         return;
       }
       console.log(result.url);
+      printAccountNotice(result);
     });
   image
     .command("img2img")
@@ -246,6 +313,7 @@ Request shape:
     .option("--ratio <ratio>", `Aspect ratio (${IMAGE_RATIOS.join(", ")})`)
     .option("--seed <number>", "Seed (pass-through; undocumented for image models)", parseInteger)
     .option("--ttl <ttl>", "Temporary upload TTL", "1h")
+    .option("--affinity <name>", "Sticky session name: repeat with the same value to keep one account")
     .option("--json", "Output JSON")
     .addHelpText("after", `
 Example:
@@ -255,7 +323,7 @@ Request shape:
   Resolves the local file to a public URL when needed, then sends it as a one-item Agnes image URL array for image-to-image generation.
 `)
     .action(async (options) => {
-      const result = await client.image.generate({
+      const result = await getClient().image.generate({
         mode: "img2img",
         image: options.image,
         prompt: options.prompt,
@@ -264,12 +332,14 @@ Request shape:
         ratio: options.ratio,
         seed: options.seed,
         ttl: ttlSchema.parse(options.ttl),
+        route: getRouteFor(options),
       });
       if (options.json) {
         printJson(result);
         return;
       }
       console.log(result.url);
+      printAccountNotice(result);
     });
   image
     .command("compose")
@@ -281,6 +351,7 @@ Request shape:
     .option("--ratio <ratio>", `Aspect ratio (${IMAGE_RATIOS.join(", ")})`)
     .option("--seed <number>", "Seed (pass-through; undocumented for image models)", parseInteger)
     .option("--ttl <ttl>", "Temporary upload TTL", "1h")
+    .option("--affinity <name>", "Sticky session name: repeat with the same value to keep one account")
     .option("--json", "Output JSON")
     .addHelpText("after", `
 Example:
@@ -291,7 +362,7 @@ Request shape:
 `)
     .action(async (options) => {
       const images = toArray(options.image);
-      const result = await client.image.generate({
+      const result = await getClient().image.generate({
         mode: "compose",
         images,
         prompt: options.prompt,
@@ -300,12 +371,14 @@ Request shape:
         ratio: options.ratio,
         seed: options.seed,
         ttl: ttlSchema.parse(options.ttl),
+        route: getRouteFor(options),
       });
       if (options.json) {
         printJson(result);
         return;
       }
       console.log(result.url);
+      printAccountNotice(result);
     });
 
   const video = program.command("video").description("Generate Agnes videos");
@@ -319,44 +392,55 @@ Examples:
   agnes video poll video_123 --model agnes-video-2.5
 
 Agnes Video 2.5 (default) is asynchronous: create a task, then poll it with video_id + model_name.
+Create→poll affinity keeps the same account (persisted in AGNES_STATE_DIR) so polls never rotate credentials.
 Agnes Video v2.0 was retired on 2026-09-25; legacy flags stay available only for explicit --model agnes-video-v2.0 calls.
 `);
-  buildVideoGenerateCommand(video, "text2video", "Generate a video from text", async (client, options) =>
+  const videoDeps = { getClient, getRoute };
+  buildVideoGenerateCommand(video, "text2video", "Generate a video from text", async (client, options, route) =>
     client.video.generate({
       mode: "text2video",
       prompt: options.prompt,
       ...videoOptions(options),
+      route,
     }),
+    false,
+    videoDeps,
   );
-  buildVideoGenerateCommand(video, "img2video", "Generate a video from one input image", async (client, options) =>
+  buildVideoGenerateCommand(video, "img2video", "Generate a video from one input image", async (client, options, route) =>
     client.video.generate({
       mode: "img2video",
       image: Array.isArray(options.image) ? options.image[0] : options.image,
       prompt: options.prompt,
       ...videoOptions(options),
       ttl: ttlSchema.parse(options.ttl),
+      route,
     }),
     "single",
+    videoDeps,
   );
-  buildVideoGenerateCommand(video, "multivideo", "Generate a video from multiple input images", async (client, options) =>
+  buildVideoGenerateCommand(video, "multivideo", "Generate a video from multiple input images", async (client, options, route) =>
     client.video.generate({
       mode: "multivideo",
       images: toArray(options.image),
       prompt: options.prompt,
       ...videoOptions(options),
       ttl: ttlSchema.parse(options.ttl),
+      route,
     }),
     "multi",
+    videoDeps,
   );
-  buildVideoGenerateCommand(video, "keyframes", "Generate a keyframe video from multiple images", async (client, options) =>
+  buildVideoGenerateCommand(video, "keyframes", "Generate a keyframe video from multiple images", async (client, options, route) =>
     client.video.generate({
       mode: "keyframes",
       images: toArray(options.image),
       prompt: options.prompt,
       ...videoOptions(options),
       ttl: ttlSchema.parse(options.ttl),
+      route,
     }),
     "multi",
+    videoDeps,
   );
 
   video
@@ -372,17 +456,20 @@ Example:
 
 Request shape:
   Sends one GET /agnesapi?video_id={video_id}&model_name={model} request. It does not poll.
+  The owning account is resolved from the affinity journal (or --account) so status lookups never rotate credentials.
 `)
     .action(async (id, options) => {
-      const result = await client.video.get(id, {
+      const result = await getClient().video.get(id, {
         timeoutMs: (options.timeout ?? 30) * 1000,
         modelName: options.model,
+        route: getRoute(),
       });
       if (options.json) {
         printJson(result);
         return;
       }
       printVideoResult(result);
+      printAccountNotice(result);
     });
 
   video
@@ -400,18 +487,21 @@ Example:
 Request shape:
   Polls GET /agnesapi?video_id={video_id}&model_name={model} until the task completes, fails, or times out.
   model_name is required by Agnes Video 2.5 for keyframe and reference tasks. If you pass a task_ id, the legacy /videos/{task_id} endpoint is used instead.
+  Polls always reuse the account that created the task (affinity journal); they never rotate accounts.
 `)
     .action(async (id, options) => {
-      const result = await client.video.poll(id, {
+      const result = await getClient().video.poll(id, {
         intervalSeconds: options.interval,
         timeoutSeconds: options.timeout,
         modelName: options.model,
+        route: getRoute(),
       });
       if (options.json) {
         printJson(result);
         return;
       }
       printVideoResult(result);
+      printAccountNotice(result);
     });
 
   try {
@@ -421,12 +511,22 @@ Request shape:
   }
 }
 
+interface VideoCommandDeps {
+  getClient: () => AgnesClient;
+  getRoute: () => RouteOptions;
+}
+
 function buildVideoGenerateCommand(
   video: Command,
   name: string,
   description: string,
-  fn: (client: ReturnType<typeof createAgnesClient>, options: any) => Promise<unknown>,
+  fn: (
+    client: AgnesClient,
+    options: any,
+    route: RouteOptions,
+  ) => Promise<unknown>,
   imageMode: false | "single" | "multi" = false,
+  deps: VideoCommandDeps,
 ): void {
   let command = video
     .command(name)
@@ -445,6 +545,7 @@ function buildVideoGenerateCommand(
     .option("--num-frames <number>", "Legacy v2.0 only: frame count (8n + 1, <= 441)", parseInteger)
     .option("--frame-rate <number>", "Legacy v2.0 only: frame rate (1-60)", parseInteger)
     .option("--negative-prompt <text>", "Legacy v2.0 only: negative prompt")
+    .option("--affinity <name>", "Sticky session name: repeat with the same value to keep one account")
     .option("--json", "Output JSON");
   if (imageMode === "single") {
     command = command
@@ -457,13 +558,18 @@ function buildVideoGenerateCommand(
   }
   command.addHelpText("after", buildVideoHelp(name, imageMode));
   command.action(async (options) => {
-    const client = createAgnesClient();
-    const result = await fn(client, options);
+    const globals = options as { affinity?: string };
+    const route: RouteOptions = { ...deps.getRoute() };
+    if (typeof globals.affinity === "string" && globals.affinity.trim()) {
+      route.affinityKey = `session:${globals.affinity.trim()}`;
+    }
+    const client = deps.getClient();
+    const result = await fn(client, options, route);
     if (options.json) {
       printJson(result);
       return;
     }
-    const task = result as { taskId: string; videoId?: string; status: string; model?: string };
+    const task = result as { taskId: string; videoId?: string; status: string; model?: string; accountId?: string };
     const model = task.model ?? options.model;
     const pollId = task.videoId ?? task.taskId;
     printLines([
@@ -473,6 +579,10 @@ function buildVideoGenerateCommand(
       `status: ${task.status}`,
       `next: agnes video poll ${pollId} --model ${model}`,
     ]);
+    const resolved = client.resolvedConfig;
+    if (resolved.accountsConfig.accounts.length > 1 && task.accountId) {
+      console.error(`account: ${task.accountId}`);
+    }
   });
 }
 
@@ -490,6 +600,19 @@ function videoOptions(options: any): Record<string, unknown> {
     frameRate: options.frameRate,
     negativePrompt: options.negativePrompt,
   };
+}
+
+function parseStrategyFlag(value: string): RoutingStrategy {
+  const normalized = String(value).trim().toLowerCase();
+  if (!(ROUTING_STRATEGIES as readonly string[]).includes(normalized)) {
+    throw new AgnesCliError(
+      "INVALID_STRATEGY",
+      `Unknown routing strategy "${value}". Allowed: ${ROUTING_STRATEGIES.join(", ")}.`,
+      undefined,
+      2,
+    );
+  }
+  return normalized as RoutingStrategy;
 }
 
 function handleCliError(error: unknown, argv: string[]): never {
@@ -603,6 +726,7 @@ Request shape:
   ${shapeNotes[name] ?? "Creates an Agnes video task."}
   ${imageNote}
   Video 2.5 by default (${DEFAULT_VIDEO_MODEL}). The retired v2.0 payload is only used with --model agnes-video-v2.0.
+  The creating account is journaled for create→poll affinity; polls reuse it.
 `;
 }
 

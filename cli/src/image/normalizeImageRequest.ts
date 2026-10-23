@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Ttl } from "../config.js";
 import { AgnesCliError } from "../errors.js";
+import { routeOptionsSchema } from "../accounts/route.js";
 import {
   DEFAULT_IMAGE_MODEL,
   DEFAULT_IMAGE_SIZE,
@@ -18,6 +19,7 @@ const shared = {
   ratio: z.enum(IMAGE_RATIOS).optional(),
   responseFormat: z.literal("url").optional(),
   seed: z.number().int().optional(),
+  route: routeOptionsSchema,
 };
 
 export const imageGenerateSchema = z.discriminatedUnion("mode", [

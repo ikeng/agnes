@@ -1,17 +1,18 @@
 import type { AgnesClientConfig, NormalizedVideoTask } from "../config.js";
-import { resolveConfig } from "../config.js";
+import { resolveClientConfig } from "../config.js";
 import { AgnesCliError } from "../errors.js";
 import { requestJson } from "../http/requestJson.js";
 import { toPublicUrl } from "../media/toPublicUrl.js";
-import { collectVideoInputs, normalizeVideoRequest, type VideoGenerateOptions, videoGenerateSchema } from "./normalizeVideoRequest.js";
 import { DEFAULT_VIDEO_MODEL } from "../models.js";
+import { routingInfo } from "../accounts/route.js";
+import { collectVideoInputs, normalizeVideoRequest, type VideoGenerateOptions, videoGenerateSchema } from "./normalizeVideoRequest.js";
 
 export async function generateVideo(
   options: VideoGenerateOptions,
   config: AgnesClientConfig = {},
 ): Promise<NormalizedVideoTask> {
   const parsed = videoGenerateSchema.parse(options);
-  const resolved = resolveConfig(config);
+  const resolved = resolveClientConfig(config);
   if (!resolved.apiKey) {
     throw new AgnesCliError("AUTH_MISSING", "AGNES_API_KEY is required for Agnes requests.");
   }
@@ -19,20 +20,61 @@ export async function generateVideo(
   const { inputs, ttl } = collectVideoInputs(parsed);
   const resolvedImages = await resolveMediaInputs(inputs, ttl, config);
   const payload = normalizeVideoRequest(parsed, resolvedImages);
-  const { response, raw } = await requestJson(resolved.fetchImpl, `${resolved.baseUrl}/videos`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${resolved.apiKey}`,
-      "Content-Type": "application/json",
+  const model = String(payload.model ?? parsed.model ?? DEFAULT_VIDEO_MODEL);
+  const route = parsed.route;
+
+  const routed = await resolved.router.execute(
+    {
+      ...(route ?? {}),
+      workload: "video",
+      model,
+      method: "POST",
     },
-    body: JSON.stringify(payload),
-  }, {
-    networkMessage: "Agnes video request failed before a response was received.",
-  });
+    (account) =>
+      requestJson(
+        resolved.fetchImpl,
+        `${(account.baseUrl ?? resolved.baseUrl).replace(/\/$/, "")}/videos`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${account.key}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        },
+        {
+          networkMessage: "Agnes video request failed before a response was received.",
+          retries: 0,
+        },
+      ),
+  );
+  const { response, raw } = routed.value;
   if (!response.ok) {
     throw new AgnesCliError("AGNES_REQUEST_FAILED", `Agnes video request failed with HTTP ${response.status}.`, raw);
   }
-  return normalizeVideoTask(raw, parsed.model);
+  const task = normalizeVideoTask(raw, parsed.model);
+  bindVideoAffinity(resolved, task, model, routed.accountId);
+  return {
+    ...task,
+    accountId: routed.accountId,
+    poolId: routed.poolId,
+    routing: routingInfo(routed, route?.strategy ?? resolved.router.config.strategy),
+  };
+}
+
+/**
+ * Persist create→poll affinity: both `video:<videoId>` and `task:<taskId>` are
+ * bound on success so any later status lookup resolves the owning account.
+ */
+function bindVideoAffinity(
+  resolved: ReturnType<typeof resolveClientConfig>,
+  task: NormalizedVideoTask,
+  model: string,
+  accountId: string,
+): void {
+  const meta = { model, kind: "video" };
+  if (task.videoId) resolved.router.bindAffinity(`video:${task.videoId}`, accountId, meta);
+  if (task.taskId) resolved.router.bindAffinity(`task:${task.taskId}`, accountId, meta);
 }
 
 async function resolveMediaInputs(inputs: string[], ttl: string | undefined, config: AgnesClientConfig): Promise<string[]> {

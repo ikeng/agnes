@@ -11,9 +11,9 @@ upstream=$(cat "$ROOT/cli/UPSTREAM.md" 2>/dev/null || true)
 assert_contains "$upstream" "9e629302cf30898d09f60fb2ba3e52e795b7ccf4" "vendored commit" || true
 assert_contains "$upstream" "0.1.6" "vendored npm version" || true
 
-t_begin "project CLI version is 0.2.0-local.1"
+t_begin "project CLI version is 0.3.0-local.1"
 version=$(node -p "require('$ROOT/cli/package.json').version" 2>/dev/null || true)
-assert_eq "0.2.0-local.1" "$version" "cli/package.json version" || true
+assert_eq "0.3.0-local.1" "$version" "cli/package.json version" || true
 
 t_begin "local patch is documented"
 if [ -s "$ROOT/patches/cli-local.patch" ]; then t_ok; else t_fail "patches/cli-local.patch missing/empty"; fi

@@ -53,9 +53,9 @@ hand-written HTTP only for the few cases the CLI does not cover (listed in
 
 > This copy is maintained in the **agnes-toolkit** repo (`skill/agnes-ai-skill/`)
 > and is the source of truth for the project. It targets the patched CLI
-> (`cli/`, `0.2.0-local.1`) installed with `npm run install-local`; `npx
+> (`cli/`, `0.3.0-local.1`) installed with `npm run install-local`; `npx
 > agnes-ai-cli@^0.1.0` is an older fallback and does **not** understand Video
-> 2.5.
+> 2.5 or multi-account/batch features.
 
 Agnes is one OpenAI-compatible platform for:
 
@@ -74,6 +74,12 @@ Use this skill when:
   keyframe video generation
 - the user wants a low-friction multimodal API for prototyping, agent loops,
   creative iteration, ecommerce content, or storyboard work
+- the user has multiple Agnes keys/accounts, hits 429s under concurrency, or
+  needs reproducible/resumable **batch production** across an account pool
+- the user is generating **game UI assets** (nine-slice panels/buttons/bars,
+  icons, badges): use `ui-ninepatch-asset-pipeline` for the prompt structure,
+  chroma-key conventions, and acceptance criteria; this skill only covers the
+  API/CLI call itself
 
 Do not use this skill when:
 
@@ -119,19 +125,26 @@ not as the operational source of truth.
 - Key env var: `AGNES_API_KEY`; optional base override: `AGNES_BASE_URL`
   (supported by this CLI build via `resolveConfig`; the repo wrapper also loads
   it from `.env.local`)
-- Header: `Authorization: Bearer $AGNES_API_KEY`
+- Multi-account: indexed `AGNES_ACCOUNT_<ID>_KEY` (+ `_TYPE/_POOL/_WEIGHT/
+  _PRIORITY/_CONCURRENCY/_MODELS/_BASE_URL/_LABEL`) or an explicit
+  `AGNES_ACCOUNTS_FILE`; indexed accounts override `AGNES_API_KEY` for routing
+- Header: `Authorization: Bearer <account key>`
 - Preferred execution package: the patched project CLI (`agnes` via
   `npm run install-local`); fallback `npx -y agnes-ai-cli@^0.1.0`
 
 Check auth before live requests:
 
 ```bash
-agnes auth check --json
+agnes auth check --json                    # {ok, configured, source, accounts, pools, strategy}
+agnes accounts list                        # redacted account/pool view (never prints keys)
+agnes accounts check --live                # GET /models reachability per account (free; NOT a credential proof)
+agnes accounts check --live --probe text   # credential proof: one max_tokens:1 chat per account (tiny cost)
 ```
 
 ## Missing Key Behavior
 
-If `AGNES_API_KEY` is missing and the task requires live Agnes access:
+If no Agnes credential is configured (`AGNES_API_KEY`, `AGNES_ACCOUNT_<ID>_KEY`,
+or an accounts file) and the task requires live Agnes access:
 
 1. Tell the user Agnes access is not configured yet.
 2. Point them to:
@@ -274,6 +287,113 @@ agnes video text2video --model agnes-video-v2.0 --prompt "..." \
 ```
 
 Use only to reproduce an old integration; new work must use Video 2.5.
+
+## Multi-account Pools And Batch Production (2026-10)
+
+Use this workflow when the user has more than one Agnes key/account, is hitting
+429s under concurrency, or needs many similar generations that must be
+reproducible and resumable. Keep it CLI-first; the patched CLI handles pools,
+pacing, create→poll affinity, manifests and resume. Full reference:
+`cli/README.md`; evidence/design: `docs/multi-account-research.md`,
+`docs/multi-account-design.md`.
+
+### Pool rules you must respect
+
+- Agnes limits are shared per **key type**, not per key: multiple keys of the
+  same type on one account do **not** stack RPM/quota. Only distinct accounts or
+  distinct key types (`free` / `enterprise` / `tokenplan`) are independent pools.
+- A 429 is account/pool level. Group same-account keys with the same
+  `POOL`; never present "add more same-type keys" as a capacity increase.
+
+### Commands
+
+```bash
+agnes accounts list                     # redacted: key shown only as present (len=N)
+agnes accounts check --live             # models reachability only — free, but NOT a credential proof
+agnes accounts check --live --probe text  # real credential proof (one tiny chat request per account)
+agnes --account main text chat --prompt "..."          # force one account (no failover)
+agnes --strategy round-robin image text2img --prompt "..." --json
+agnes image text2img --prompt "..." --affinity campaign-42   # sticky session account
+agnes batch run jobs.json --out ./out
+agnes batch status ./out --json
+agnes batch retry ./out --only failed
+```
+
+- Multi-account config is env-only or an explicit accounts file, e.g.
+  `AGNES_ACCOUNT_MAIN_KEY`, `_TYPE=free`, `_POOL=acct-main`,
+  `AGNES_ROUTING_STRATEGY=adaptive`, `AGNES_STATE_DIR=~/.agnes/state`.
+- Single `AGNES_API_KEY` keeps working unchanged. Never print, echo, or write a
+  key; `accounts list/check` is safe to show the user.
+
+### Batch input and artifacts
+
+`jobs.json` (also accepted: JSONL, one job per line):
+
+```json
+{
+  "version": 1,
+  "batchId": "ui-icons-v1",
+  "consistency": "record",
+  "defaults": { "ttl": "1h" },
+  "defaultsByKind": {
+    "image": { "model": "agnes-image-2.5-flash", "size": "1K", "ratio": "1:1" },
+    "video": { "model": "agnes-video-2.5", "size": "720P", "seconds": 5 }
+  },
+  "jobs": [
+    { "id": "icon-001", "kind": "image", "mode": "text2img", "prompt": "a shield icon" },
+    { "id": "clip-001", "kind": "video", "mode": "text2video", "prompt": "a wave at dusk" }
+  ]
+}
+```
+
+`batch run` writes `manifest.json`, `input.json`, `events.jsonl`, and
+`results/<id>.json` under `--out`; results are in input order and record
+`model`/`modelSource`, `accountId`/`poolId`/`routing`. `--dry-run` sends nothing
+and writes nothing.
+
+Defaults are **kind-aware**: precedence is job value > `defaultsByKind[kind]` >
+flat `defaults` (kind-compatible params only) > built-in kind default. A flat
+`defaults.model` is only used when it belongs to that kind's model catalog;
+otherwise the kind's built-in model is used (`image` `agnes-image-2.5-flash`,
+`video` `agnes-video-2.5`, `text` `agnes-2.5-flash`). Incompatible values are
+dropped (image `ratio`/exact sizes never reach video; `1K` works for both image
+and video). Each manifest job records `model` + `modelSource`
+(`job` | `defaults` | `kind-default`).
+
+### `record` vs `strict`
+
+- `record` (default): per-create routing; mixed accounts possible
+  (`mixedAccounts=true`). Best throughput.
+- `strict`: one pinned account for every create and poll; on 429 it waits for
+  that pool instead of failing over, and on 401/402/403 the batch fails (strict
+  consistency cannot be satisfied). Use strict when the user needs comparable
+  output from one account, or when they say "same account/consistent style".
+  `--account` implies strict.
+
+### 429, retries, resume
+
+- 429 cools the whole pool; the CLI honors `Retry-After` and fails over creates
+  only on definitive rejections. Status polls never rotate accounts.
+- `AMBIGUOUS_CREATE` (5xx/timeout after a create POST) is **never** retried
+  automatically — the task may already exist/bill. Check the Agnes console or
+  manifest first.
+- Per-job invalid params fail as non-retryable `INVALID_JOB` (message names the
+  job id, exit 1, no duplicate create); fix the job and retry explicitly.
+- `batch run --resume` skips succeeded jobs without new creates, aborts on
+  changed input (`BATCH_INPUT_CHANGED`), and recovers interrupted `running` jobs
+  with ambiguity warnings. `batch retry --only failed` re-runs stored jobs.
+- Exit codes: 0 all succeeded/skipped, 1 any failed, 2 invalid input/config.
+
+### Provenance and safety
+
+- Every JSON result adds `accountId`, `poolId`, `routing`; human output prints
+  `account: <id>` on stderr only when more than one account is configured.
+- Never write keys into batch inputs, manifests, logs, or user-visible output.
+  State dir (`AGNES_STATE_DIR`, default `~/.agnes/state`) is 0700/0600 and stores
+  only account ids/pools/resource ids.
+- Do not manually "try another account" for a video status lookup; pass
+  `--account <id>` only when you know the owner (default is the affinity
+  journal).
 
 ## Video 2.5 Contract
 
@@ -477,6 +597,13 @@ and terminal status, and to detect failures cleanly (`ok: false`, `code`,
   synchronous completion.
 - Prefer `videoId` + matching `--model` for polling; `taskId` remains
   legacy-compatible.
+- For more than one key/account, configure pools first (`agnes accounts
+  check --live`), then use `agnes batch` for volume instead of ad-hoc loops.
+- Check `agnes accounts list` before blaming a model: a 429/RATE_LIMITED is a
+  pool pacing/capacity signal, not an invalid request.
+- If the batch has failed jobs, use `agnes batch status <out> --json` then
+  `agnes batch retry <out> --only failed`; use `--resume` only with the original
+  input file.
 - Use the CLI's local-file bridge instead of uploading files manually.
 - If the user asks for SDK code, translate the confirmed CLI/HTTP behavior into
   the target language after validating the path.
@@ -494,12 +621,27 @@ and terminal status, and to detect failures cleanly (`ok: false`, `code`,
 - Text model (default): `agnes-2.5-flash` (also `agnes-3.0-flash`, `agnes-2.5-pro`, `agnes-2.5-pro-beta`)
 - Image model (default): `agnes-image-2.5-flash` (also `agnes-image-2.1-flash`, `agnes-image-2.0-flash`)
 - Video model (default): `agnes-video-2.5` (also `agnes-video-2.5-flash`; `agnes-video-v2.0` retired)
+- Multi-account: `agnes accounts list|check [--live]`, `agnes batch run|status|retry`, global `--account`/`--strategy`
 
 ## Do Not
 
 - Do not proceed with live Agnes calls when the key is missing
 - Do not default to raw `curl` for Agnes execution when the CLI covers the flow
 - Do not poll a video task without the matching `--model`
+- Do not poll a video task on a different account than the one that created it
+  (use the affinity journal or an explicit `--account` you know is correct)
+- Do not retry a create request after `AMBIGUOUS_CREATE` without checking the
+  account dashboard/manifest first
+- Do not assume a flat `defaults.model` applies to every batch job kind; it is
+  catalog-filtered per kind. Use `defaultsByKind` or per-job `model` overrides
+  when a mixed batch needs specific models.
+- Do not present "more keys of the same type" as more capacity; only separate
+  pools stack
+- Do not print, echo, log, or commit API keys or accounts-file contents; only
+  `present (len=N)` / `missing` is safe to show
+- Do not claim `accounts check --live` proved a key is valid: `/v1/models`
+  answers 200 even for fabricated tokens. Use `--probe text` for a real
+  credential proof (one tiny text call per account)
 - Do not use `agnes-video-v2.0` or `agnes-2.0-flash` for new work
 - Do not send Video 2.5 legacy fields (`width`, `height`, `num_frames`, `frame_rate`, `negative_prompt`)
 - Do not send pixel dimensions such as `1280x720` in `size`; use tiers
@@ -514,6 +656,11 @@ and terminal status, and to detect failures cleanly (`ok: false`, `code`,
 - Never continue with live Agnes requests when auth is missing or clearly invalid
 - Never print, log, or commit `AGNES_API_KEY`; in this repo `.env.local` is
   gitignored and must stay mode 600
+- Never print an accounts file: it can contain keys. `agnes accounts list/check`
+  redacts them; prefer those commands in logs/transcripts
+- Multi-account state (`~/.agnes/state`) and batch artifacts contain account
+  ids/pools and prompts, not keys; keep them outside the repo and do not share
+  them without checking
 - Never write the key to a project file unless the user explicitly asks
 - Never promise pricing, limits, or "forever free" terms without noting they can
   change over time
@@ -543,7 +690,9 @@ comes up.
   `agnes-2.5-flash` with `agnes-3.0-flash`/`2.5-pro`/`2.5-pro-beta`, image
   default `agnes-image-2.5-flash`, new `agnes models` command and flags,
   current `wiki.agnes-ai.com` doc links, and raw-HTTP fallbacks for
-  references/Base64/Responses/Messages.
+  references/Base64/Responses/Messages. Maintained copy additionally documents
+  the toolkit CLI `0.3.0-local.1` multi-account pools and `agnes batch`
+  production workflow (2026-10-23).
 - `1.2.2` - Added a linked Chinese README and Chinese quick-start onboarding
   guidance for agent responses.
 - `1.2.1` - Made `npx -y agnes-ai-cli@^0.1.0` the default copy-paste execution

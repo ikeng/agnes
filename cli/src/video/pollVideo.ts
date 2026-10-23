@@ -1,12 +1,16 @@
 import type { AgnesClientConfig, NormalizedVideoResult } from "../config.js";
+import { resolveClientConfig } from "../config.js";
 import { AgnesCliError, isAgnesCliError } from "../errors.js";
 import { getVideo, normalizeVideoStatus } from "./getVideo.js";
+import type { RouteOptions } from "../accounts/types.js";
 
 export interface PollVideoOptions {
   intervalSeconds?: number;
   timeoutSeconds?: number;
   /** Forwarded as `model_name` on the recommended Video 2.5 polling endpoint. */
   modelName?: string;
+  /** Routing options: affinity/account pin for create→poll consistency. */
+  route?: RouteOptions;
 }
 
 export async function pollVideo(
@@ -14,8 +18,20 @@ export async function pollVideo(
   options: PollVideoOptions = {},
   config: AgnesClientConfig = {},
 ): Promise<NormalizedVideoResult> {
-  const intervalMs = (options.intervalSeconds ?? 5) * 1000;
-  const timeoutMs = (options.timeoutSeconds ?? 600) * 1000;
+  const resolved = resolveClientConfig(config);
+  const baseIntervalMs = (options.intervalSeconds ?? 5) * 1000;
+  // The pacer floor (AGNES_POLL_INTERVAL_MS, default 2 s) only applies when
+  // client-side pacing is active; raw JS-API clients keep their exact timings.
+  const floorMs = resolved.router.isPassthrough ? 0 : resolved.router.pollIntervalMs;
+  const intervalMs = Math.max(baseIntervalMs, floorMs);
+  // AGNES_POLL_TIMEOUT_MS is the documented default poll budget when the caller
+  // does not pass an explicit timeout (the CLI --timeout default still wins).
+  const envTimeout = Number.parseInt(resolved.env.AGNES_POLL_TIMEOUT_MS ?? "", 10);
+  const timeoutMs = options.timeoutSeconds !== undefined
+    ? options.timeoutSeconds * 1000
+    : Number.isFinite(envTimeout) && envTimeout > 0
+      ? envTimeout
+      : 600_000;
   const started = Date.now();
 
   while (true) {
@@ -25,7 +41,14 @@ export async function pollVideo(
 
     let result;
     try {
-      result = await getVideo(id, options.modelName ? { modelName: options.modelName } : {}, config);
+      result = await getVideo(
+        id,
+        {
+          ...(options.modelName ? { modelName: options.modelName } : {}),
+          ...(options.route ? { route: options.route } : {}),
+        },
+        config,
+      );
     } catch (error) {
       // Network blips, 429s and 5xx are transient for an idempotent status GET:
       // keep polling until the overall timeout instead of failing the task.
@@ -58,7 +81,13 @@ export function normalizeVideoResult(raw: unknown): NormalizedVideoResult {
 
 function isTransientPollError(error: unknown): boolean {
   if (!isAgnesCliError(error)) return false;
-  if (error.code === "SERVICE_BUSY" || error.code === "NETWORK_ERROR") return true;
+  if (
+    error.code === "SERVICE_BUSY" ||
+    error.code === "NETWORK_ERROR" ||
+    error.code === "RATE_LIMITED"
+  ) {
+    return true;
+  }
   if (error.code !== "AGNES_REQUEST_FAILED") return false;
   const details = error.details && typeof error.details === "object"
     ? error.details as Record<string, unknown>

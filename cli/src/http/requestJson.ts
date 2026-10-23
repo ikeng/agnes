@@ -48,6 +48,33 @@ export async function requestJson(
   });
 }
 
+/**
+ * Parse a `Retry-After` response header into milliseconds.
+ *
+ * Supports both documented forms: delay-seconds and an HTTP-date. Returns
+ * `undefined` when the header is missing or unparseable; `0` is a valid value
+ * (some endpoints answer `Retry-After: 0`).
+ */
+export function parseRetryAfterMs(response: Response): number | undefined {
+  const raw = response.headers?.get("retry-after");
+  if (raw === null || raw === undefined) return undefined;
+  const value = raw.trim();
+  if (!value) return undefined;
+  if (/^\d+(?:\.\d+)?$/.test(value)) {
+    const seconds = Number.parseFloat(value);
+    if (!Number.isFinite(seconds) || seconds < 0) return undefined;
+    return Math.round(seconds * 1000);
+  }
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return undefined;
+  return Math.max(0, timestamp - Date.now());
+}
+
+/** Statuses that are usually transient for idempotent (GET) requests. */
+export function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
 async function readResponseBody(response: Response): Promise<unknown> {
   const text = await response.text();
   if (!text.trim()) return null;

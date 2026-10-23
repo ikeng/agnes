@@ -30,7 +30,8 @@ Opencode, and other SKILL.md-compatible agent tools.
 ```bash
 npm run install-local   # 构建并 link 补丁版 CLI，同时安装本 Skill
 agnes models            # 查看当前模型目录
-agnes auth check        # 校验 AGNES_API_KEY（不会打印 key）
+agnes auth check        # 校验已配置的凭证（不会打印 key）
+agnes accounts list     # 脱敏查看多账号池（不会打印 key）
 ```
 
 独立安装上游旧版（不推荐；上游 `SKILL.md` 仍是 1.2.2 的旧模型）：
@@ -111,16 +112,48 @@ npx skills add jomeswang/agnes-ai-skill --agent codex --yes
 ## 配套 CLI
 
 推荐使用 agnes-toolkit 仓库内的补丁版 CLI（`cli/`，基于上游
-`jomeswang/agnes-ai-cli` v0.1.6，版本号 `0.2.0-local.1`）：
+`jomeswang/agnes-ai-cli` v0.1.6，版本号 `0.3.0-local.1`）：
 
 ```bash
 npm run install-local   # 构建并 link 补丁版 CLI，同时安装本 Skill
 agnes models            # 查看当前模型目录
-agnes auth check        # 校验 AGNES_API_KEY（不会打印 key）
+agnes auth check        # 校验已配置的凭证（不会打印 key）
+agnes accounts list     # 脱敏查看多账号池（不会打印 key）
 ```
 
 仅作为兜底：`npx -y agnes-ai-cli@^0.1.0` 是旧的 0.1.6 上游版本，
-不支持 Video 2.5，图片默认模型也更旧。
+不支持 Video 2.5、图片 2.5 默认模型、多账号路由与 `agnes batch`。
+
+### 多账号与批量生产（2026-10 新增）
+
+补丁版 CLI 支持多账号池与可复现的批量任务：
+
+```bash
+agnes accounts list             # 脱敏列表：只显示 present (len=N)，绝不打印 key
+agnes accounts check --live     # 逐账号 GET /models 可达性（免费，但不是凭证验证）
+agnes accounts check --live --probe text  # 真正的凭证验证：每账号 1 次极小文本请求
+agnes --account main text chat --prompt "..."        # 强制单账号
+agnes --strategy round-robin image text2img --prompt "..." --json
+agnes image text2img --prompt "..." --affinity campaign-42
+agnes batch run jobs.json --out ./out
+agnes batch status ./out --json
+agnes batch retry ./out --only failed
+```
+
+- 同账号同类型的多把 key **不会叠加**限速/额度；只有不同账号或不同 key 类型
+  （free/enterprise/tokenplan）才是独立池。共享同一账号的 key 用 `POOL` 分组。
+- `record`（默认）允许跨账号执行并逐个 job 记录来源；`strict` 整批固定一个账号，
+  适合需要可比较输出的场景。
+- 视频任务必须由创建它的账号轮询；CLI 会用亲和 journal 自动保证，永不换账号。
+- 429 是池级限流，CLI 自动处理 `Retry-After`、冷却与安全 failover；
+  `AMBIGUOUS_CREATE` 不会自动重试，先到控制台确认。
+- 批量默认值是 kind-aware 的：`defaultsByKind` 按 kind 覆盖，flat `defaults.model` 只在该 kind 的模型
+  目录内生效；每个 job 记录 `model`/`modelSource`，非法 job 参数归类为不可重试的 `INVALID_JOB`。
+- `--resume` 跳过已成功 job、不重复创建；输入变化会拒绝续跑。
+- 不要把 key 或 accounts 文件内容打印/写入日志；只展示 `present (len=N)` / `missing`。
+
+完整命令参考见 `cli/README.md`，详细工作流见
+[`SKILL.md`](./SKILL.md#multi-account-pools-and-batch-production-2026-10)。
 
 ## 模型指南（2026-10-21 文档）
 

@@ -24,7 +24,14 @@ test("auth check exits non-zero when the key is missing", () => {
   try {
     const result = run(cwd, ["auth", "check", "--json"], cleanEnv({ AGNES_NO_DOTENV: "1" }));
     assert.equal(result.status, 1);
-    assert.deepEqual(JSON.parse(result.stdout), { ok: false, configured: false, source: "missing" });
+    assert.deepEqual(JSON.parse(result.stdout), {
+      ok: false,
+      configured: false,
+      source: "missing",
+      accounts: 0,
+      pools: [],
+      strategy: "adaptive",
+    });
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -36,7 +43,14 @@ test("auth check loads the nearest .env.local from the CLI", () => {
     writeFileSync(join(cwd, ".env.local"), "AGNES_API_KEY=sk-fake-local-key\n");
     const result = run(cwd, ["auth", "check", "--json"], cleanEnv());
     assert.equal(result.status, 0);
-    assert.deepEqual(JSON.parse(result.stdout), { ok: true, configured: true, source: "env" });
+    assert.deepEqual(JSON.parse(result.stdout), {
+      ok: true,
+      configured: true,
+      source: "env",
+      accounts: 1,
+      pools: ["default"],
+      strategy: "primary",
+    });
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

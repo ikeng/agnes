@@ -362,7 +362,7 @@ fi
 # or installed by scripts/install-local.sh (symlink into this repo). Both are
 # valid as long as the round-trip did not change them.
 case "$real_skill_state" in
-  absent|dir*|link:*) t_ok ;;
+  absent*|dir*|link:*) t_ok ;;
   *) t_fail "unexpected real skill state: $real_skill_state" ;;
 esac
 if [ ! -e "$HOME/.agnes-toolkit/install-manifest.env" ]; then

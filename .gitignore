@@ -21,3 +21,8 @@ tmp/
 out/
 *.log
 coverage/
+
+# multi-account config (may contain API keys) and batch output
+.agnes-accounts.json
+agnes-accounts.json
+agnes-batch/
